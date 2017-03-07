@@ -4,7 +4,7 @@ extern crate nom;
 use std::io::{self, Read};
 use std::str;
 
-use nom::{IResult, le_u32};
+use nom::{IResult, Needed, le_u32};
 
 #[derive(Debug)]
 pub enum WADType {
@@ -44,10 +44,15 @@ named!(wad_entry(&[u8]) -> WADDirectoryEntry, do_parse!(
     (WADDirectoryEntry{ filepos: filepos, size: size, name: std::str::from_utf8(name).unwrap() })
 ));
 
-fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> Vec<WADDirectoryEntry<'a>> {
+fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec<WADDirectoryEntry<'a>>> {
     let lumpct = header.numlumps as usize;
     let offset = header.infotableofs as usize;
-    // FIXME check that offset is within the buffer AND that it's long enough for all the entries
+    // TODO can i unhardcode the size of a wad entry here?
+    let tablelen = lumpct * 16;
+    if buf.len() < offset + tablelen {
+        return IResult::Incomplete(Needed::Size(tablelen));
+    }
+
     let mut ret = Vec::with_capacity(lumpct);
     let mut parse_from = &buf[offset..];
     for i in 0..lumpct {
@@ -58,16 +63,14 @@ fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> Vec<WADDirectoryEntry
             }
             // FIXME how do i return an error from here???
             IResult::Incomplete(needed) => {
-                println!("early termination what {:?}", needed);
-                break;
+                return IResult::Incomplete(needed);
             }
             IResult::Error(err) => {
-                println!("boom!  {:?}", err);
-                break;
+                return IResult::Error(err);
             }
         }
     }
-    return ret;
+    return IResult::Done(parse_from, ret);
 }
 
 
@@ -79,9 +82,10 @@ pub fn parse_wad() {
     match wad_header(buffer.as_slice()) {
         IResult::Done(_leftovers, header) => {
             println!("found {:?}, {:?}, {:?}", header.identification, header.numlumps, header.infotableofs);
-            let entries = wad_directory(buffer.as_slice(), &header);
-            for entry in entries.iter() {
-                println!("{:8x}  {:8}  {}", entry.filepos, entry.size, entry.name);
+            if let IResult::Done(_leftovers, entries) = wad_directory(buffer.as_slice(), &header) {
+                for entry in entries.iter() {
+                    println!("{:8x}  {:8}  {}", entry.filepos, entry.size, entry.name);
+                }
             }
         }
         IResult::Incomplete(needed) => {

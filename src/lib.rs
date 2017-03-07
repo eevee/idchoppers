@@ -1,7 +1,6 @@
 #[macro_use]
 extern crate nom;
 
-use std::io::{self, Read};
 use std::str;
 
 use nom::{IResult, Needed, le_u32};
@@ -12,10 +11,13 @@ pub enum WADType {
     PWAD,
 }
 
+// FIXME think about privacy here; i think it makes sense to expose all these
+// details to anyone who's interested, but i guess accessors would be good so
+// you can't totally fuck up an archive
 pub struct WADHeader {
-    identification: WADType,
-    numlumps: u32,
-    infotableofs: u32,
+    pub identification: WADType,
+    pub numlumps: u32,
+    pub infotableofs: u32,
 }
 
 
@@ -31,9 +33,9 @@ named!(wad_header<&[u8], WADHeader>, do_parse!(
 
 
 pub struct WADDirectoryEntry<'a> {
-    filepos: u32,
-    size: u32,
-    name: &'a str,
+    pub filepos: u32,
+    pub size: u32,
+    pub name: &'a str,
 }
 
 named!(wad_entry(&[u8]) -> WADDirectoryEntry, do_parse!(
@@ -55,13 +57,13 @@ fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec
 
     let mut ret = Vec::with_capacity(lumpct);
     let mut parse_from = &buf[offset..];
-    for i in 0..lumpct {
+    for _ in 0..lumpct {
         match wad_entry(parse_from) {
             IResult::Done(leftovers, entry) => {
                 parse_from = leftovers;
                 ret.push(entry);
             }
-            // FIXME how do i return an error from here???
+            // TODO this seems unnecessarily verbose
             IResult::Incomplete(needed) => {
                 return IResult::Incomplete(needed);
             }
@@ -74,25 +76,32 @@ fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec
 }
 
 
-pub fn parse_wad() {
-    let mut buffer = Vec::new();
-    io::stdin().read_to_end(&mut buffer);
-    println!("buffer len is {:?}", buffer.len());
+pub struct WADArchive<'a> {
+    pub buffer: &'a [u8],
+    pub header: WADHeader,
+    pub directory: Vec<WADDirectoryEntry<'a>>,
+}
 
-    match wad_header(buffer.as_slice()) {
+
+// FIXME use Result, but, figure out how to get an actual error out of here
+// FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
+pub fn parse_wad(buf: &[u8]) -> Option<WADArchive> {
+    match wad_header(buf) {
         IResult::Done(_leftovers, header) => {
-            println!("found {:?}, {:?}, {:?}", header.identification, header.numlumps, header.infotableofs);
-            if let IResult::Done(_leftovers, entries) = wad_directory(buffer.as_slice(), &header) {
-                for entry in entries.iter() {
-                    println!("{:8x}  {:8}  {}", entry.filepos, entry.size, entry.name);
-                }
+            if let IResult::Done(_leftovers, entries) = wad_directory(buf, &header) {
+                return Some(WADArchive{ buffer: buf, header: header, directory: entries });
+            }
+            else {
+                return None;
             }
         }
         IResult::Incomplete(needed) => {
             println!("early termination what {:?}", needed);
+            return None;
         }
         IResult::Error(err) => {
             println!("boom!  {:?}", err);
+            return None;
         }
     }
 }

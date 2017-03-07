@@ -4,3 +4,4 @@ version = "0.1.0"
 authors = ["Eevee (Lexy Munroe) <eevee.git@veekun.com>"]
 
 [dependencies]
+nom = "2.1.0"

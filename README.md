@@ -1,8 +1,8 @@
 # idchoppers
 
-idchoppers is a Rust library for parsing and manipulating WAD files and other data associated with classic Doom and Doom-era games.
+idchoppers is a Rust library and command-line tool for parsing and manipulating WAD files and other data associated with classic Doom and Doom-era games.
 
-The idea is to get all this stuff done once and for all in a safe, fast language that everything else can bind to.  (Don't @ me with that xkcd strip.)
+The idea is to get all this stuff done once and for all in a safe, fast language that everything else can bind to.  (Don't @ me with that xkcd strip.)  I intend to provide C, C++, and Python bindings eventually.
 
 It is **extremely** unfinished and a work in progress, unless I get bored with it, in which case it's not.  I never finish anything.  Sorry.  (It does help if people show continued active interest, ahem.)
 

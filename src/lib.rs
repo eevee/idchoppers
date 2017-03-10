@@ -264,11 +264,6 @@ impl<'a> Iterator for WADMapIterator<'a> {
     type Item = WADMapEntryBlock;
 
     fn next(&mut self) -> Option<WADMapEntryBlock> {
-        // Alas!  The compiler is not smart enough to realize that the
-        // following loop is inescapable without both of these getting values.
-        // TODO maybe i can reword to make this work?
-        //let mut marker_index = 0;
-        //let mut map_name = "";
         let (marker_index, map_name);
         loop {
             if let Some((i, entry)) = self.entry_iter.next() {

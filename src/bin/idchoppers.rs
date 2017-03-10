@@ -1,12 +1,10 @@
 use std::io::{self, Read};
 
 extern crate idchoppers;
-extern crate nom;
-use nom::IResult;
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
-use svg::node::element::Line;
+use svg::node::element::{Circle, Line};
 
 fn main() {
     let mut buf = Vec::new();
@@ -16,10 +14,15 @@ fn main() {
         Ok(wad) => {
             println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
             for map_range in wad.iter_maps() {
-                if let Ok(bare_map) = idchoppers::parse_doom_map(&wad, &map_range) {
-                    write_bare_map_as_svg(&bare_map);
-                    break;
+                match idchoppers::parse_doom_map(&wad, &map_range) {
+                    Ok(bare_map) => {
+                        write_bare_map_as_svg(&bare_map);
+                    }
+                    Err(err) => {
+                        println!("oh noooo got an error {:?}", err);
+                    }
                 }
+                break;
             }
         }
         Err(err) => {
@@ -58,6 +61,22 @@ fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
         }
 
         doc.append(Line::new().set("x1", v0.x).set("y1", v0.y).set("x2", v1.x).set("y2", v1.y).set("stroke-width", 1).set("stroke", "black"));
+    }
+
+    for thing in map.things.iter() {
+        if thing.x < minx {
+            minx = thing.x;
+        }
+        if thing.x > maxx {
+            maxx = thing.x;
+        }
+        if thing.y < miny {
+            miny = thing.y;
+        }
+        if thing.y > maxy {
+            maxy = thing.y;
+        }
+        doc.append(Circle::new().set("cx", thing.x).set("cy", thing.y).set("r", 16).set("fill", "red"));
     }
     doc.assign("viewBox", (minx, miny, maxx - minx, maxy - miny));
     svg::save("idchoppers-temp.svg", &doc).unwrap();

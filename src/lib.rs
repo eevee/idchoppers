@@ -7,7 +7,7 @@ use std::str::FromStr;
 use std::str;
 use std::u8;
 
-use nom::{IResult, Needed, digit, le_i16, le_u32};
+use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32};
 
 pub mod errors;
 use errors::{ErrorKind, Result};
@@ -45,6 +45,7 @@ pub enum BaseGame {
     Strife,
 }
 
+#[derive(Debug)]
 pub enum MapName {
     ExMy(u8, u8),
     MAPxx(u8),
@@ -56,51 +57,6 @@ pub enum MapFormat {
     UDMF,
 }
 
-
-
-named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
-    tag!(b"E") >>
-    e: digit >>
-    tag!(b"M") >>
-    m: digit >>
-    eof!() >>
-    (MapName::ExMy(
-        // We already know e and m are digits, so this is all safe
-        u8::from_str(str::from_utf8(e).unwrap()).unwrap(),
-        u8::from_str(str::from_utf8(m).unwrap()).unwrap(),
-    ))
-));
-
-named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
-    tag!(b"MAP") >>
-    x1: digit >>
-    x2: digit >>
-    eof!() >>
-    (MapName::MAPxx(
-        // TODO i can't help but feel that this is suboptimal
-        10 * u8::from_str(str::from_utf8(x1).unwrap()).unwrap()
-        + u8::from_str(str::from_utf8(x2).unwrap()).unwrap()
-    ))
-));
-
-named!(vanilla_map_name(&[u8]) -> MapName, alt!(exmy_map_name | mapxx_map_name));
-
-
-
-#[derive(Debug)]
-pub enum WADType {
-    IWAD,
-    PWAD,
-}
-
-// FIXME think about privacy here; i think it makes sense to expose all these
-// details to anyone who's interested, but i guess accessors would be good so
-// you can't totally fuck up an archive
-pub struct WADHeader {
-    pub identification: WADType,
-    pub numlumps: u32,
-    pub infotableofs: u32,
-}
 
 fn nom_to_result<I, O>(result: IResult<I, O>) -> Result<O> {
     match result {
@@ -123,6 +79,50 @@ fn nom_to_result<I, O>(result: IResult<I, O>) -> Result<O> {
     }
 }
 
+
+
+named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
+    tag!(b"E") >>
+    e: digit >>
+    tag!(b"M") >>
+    m: digit >>
+    eof!() >>
+    (MapName::ExMy(
+        // We already know e and m are digits, so this is all safe
+        u8::from_str(str::from_utf8(e).unwrap()).unwrap(),
+        u8::from_str(str::from_utf8(m).unwrap()).unwrap(),
+    ))
+));
+
+named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
+    tag!(b"MAP") >>
+    xx: digit >>
+    eof!() >>
+    (MapName::MAPxx(
+        // TODO need to enforce that xx is exactly two digits!  and also in [1, 32]
+        u8::from_str(str::from_utf8(xx).unwrap()).unwrap()
+    ))
+));
+
+named!(vanilla_map_name(&[u8]) -> MapName, alt!(exmy_map_name | mapxx_map_name));
+
+
+
+#[derive(Debug)]
+pub enum WADType {
+    IWAD,
+    PWAD,
+}
+
+// FIXME think about privacy here; i think it makes sense to expose all these
+// details to anyone who's interested, but i guess accessors would be good so
+// you can't totally fuck up an archive
+pub struct WADHeader {
+    pub identification: WADType,
+    pub numlumps: u32,
+    pub infotableofs: u32,
+}
+
 named!(iwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"IWAD") >> (WADType::IWAD)));
 named!(pwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"PWAD") >> (WADType::PWAD)));
 
@@ -142,12 +142,34 @@ pub struct WADDirectoryEntry<'a> {
     pub name: &'a str,
 }
 
+fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
+    match take!(input, len) {
+        IResult::Done(leftovers, bytes) => {
+            match std::str::from_utf8(bytes) {
+                Ok(string) => {
+                    return IResult::Done(leftovers, string.trim_right_matches('\0'));
+                }
+                Err(error) => {
+                    // TODO preserve the utf8 error...  somehow.
+                    return IResult::Error(nom::Err::Code(nom::ErrorKind::Custom(0)));
+                }
+            }
+        }
+        IResult::Incomplete(needed) => {
+            return IResult::Incomplete(needed);
+        }
+        IResult::Error(error) => {
+            return IResult::Error(error);
+        }
+    }
+}
+
 named!(wad_entry(&[u8]) -> WADDirectoryEntry, do_parse!(
     filepos: le_u32 >>
     size: le_u32 >>
-    name: take!(8) >>
+    name: apply!(fixed_length_ascii, 8) >>
     // FIXME the name is ascii, not utf-8, and is zero-padded
-    (WADDirectoryEntry{ filepos: filepos, size: size, name: std::str::from_utf8(name).unwrap() })
+    (WADDirectoryEntry{ filepos: filepos, size: size, name: name })
 ));
 
 fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec<WADDirectoryEntry<'a>>> {
@@ -250,7 +272,7 @@ impl<'a> Iterator for WADMapIterator<'a> {
         let (marker_index, map_name);
         loop {
             if let Some((i, entry)) = self.entry_iter.next() {
-                if let IResult::Done(_leftovers, found_map_name) = vanilla_map_name(entry.name.as_bytes()) {
+                if let IResult::Done(_, found_map_name) = vanilla_map_name(entry.name.as_bytes()) {
                     marker_index = i;
                     map_name = found_map_name;
                     break;
@@ -453,9 +475,28 @@ named!(doom_linedefs_lump<&[u8], Vec<DoomLine>>, terminated!(many0!(do_parse!(
     (DoomLine{ v0: v0, v1: v1, flags: flags, special: special, sector_tag: sector_tag, front_sidedef: front_sidedef, back_sidedef: back_sidedef })
 )), eof!()));
 
+pub struct DoomThing {
+    pub x: i16,
+    pub y: i16,
+    // TODO what is this
+    pub angle: i16,
+    pub doomednum: i16,
+    // NOTE: boom added two flags, and mbf one more, so this is a decent signal for targeting those (but not 100%)
+    pub flags: u16,
+}
+
+// TODO totally different in hexen
+named!(doom_things_lump(&[u8]) -> Vec<DoomThing>, terminated!(many0!(do_parse!(
+    x: le_i16 >>
+    y: le_i16 >>
+    angle: le_i16 >>
+    doomednum: le_i16 >>
+    flags: le_u16 >>
+    (DoomThing{ x: x, y: y, angle: angle, doomednum: doomednum, flags: flags })
+)), eof!()));
+
 
 pub struct DoomSide {}
-pub struct DoomThing {}
 pub struct DoomSector {}
 
 /// The result of parsing a Doom-format map definition.  The contained
@@ -481,12 +522,16 @@ pub fn parse_doom_map(archive: &WADArchive, range: &WADMapEntryBlock) -> Result<
     let buf = archive.entry_slice(linedefs_index);
     let lines = try!( nom_to_result(doom_linedefs_lump(buf)) );
 
+    let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
+    let buf = archive.entry_slice(things_index);
+    let things = try!( nom_to_result(doom_things_lump(buf)) );
+
     return Ok(BareDoomMap{
         vertices: vertices,
         lines: lines,
         sectors: vec![],
         sides: vec![],
-        things: vec![],
+        things: things,
     });
 }
 

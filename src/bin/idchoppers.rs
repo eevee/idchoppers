@@ -12,13 +12,18 @@ fn main() {
     let mut buf = Vec::new();
     io::stdin().read_to_end(&mut buf);
 
-    if let IResult::Done(_leftovers, wad) = idchoppers::parse_wad(buf.as_slice()) {
-        println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
-        for map_range in wad.iter_maps() {
-            if let Some(bare_map) = idchoppers::parse_doom_map(&wad, &map_range) {
-                write_bare_map_as_svg(&bare_map);
-                break;
+    match idchoppers::parse_wad(buf.as_slice()) {
+        Ok(wad) => {
+            println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
+            for map_range in wad.iter_maps() {
+                if let Ok(bare_map) = idchoppers::parse_doom_map(&wad, &map_range) {
+                    write_bare_map_as_svg(&bare_map);
+                    break;
+                }
             }
+        }
+        Err(err) => {
+            println!("oh no, an error {:?}", err.description());
         }
     }
 }

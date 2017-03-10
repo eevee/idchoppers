@@ -1,11 +1,16 @@
-extern crate core;
-use core::str::FromStr;
+#[macro_use]
+extern crate nom;
+#[macro_use]
+extern crate error_chain;
+
+use std::str::FromStr;
 use std::str;
 use std::u8;
 
-#[macro_use]
-extern crate nom;
 use nom::{IResult, Needed, digit, le_i16, le_u32};
+
+pub mod errors;
+use errors::{ErrorKind, Result};
 
 
 
@@ -97,12 +102,34 @@ pub struct WADHeader {
     pub infotableofs: u32,
 }
 
+fn nom_to_result<I, O>(result: IResult<I, O>) -> Result<O> {
+    match result {
+        IResult::Done(_, value) => {
+            return Ok(value);
+        }
+        IResult::Incomplete(needed) => {
+            // TODO what is incomplete, exactly?  where did we run out of data?
+            bail!(ErrorKind::TruncatedData);
+        }
+        IResult::Error(err) => {
+            let error_kind = match err {
+                nom::Err::Code(ref k) | nom::Err::Node(ref k, _) | nom::Err::Position(ref k, _) | nom::Err::NodePosition(ref k, _, _) => k
+            };
+            match *error_kind {
+                nom::ErrorKind::Custom(1) => bail!(ErrorKind::InvalidMagic),
+                _ => bail!(ErrorKind::ParseError),
+            }
+        }
+    }
+}
 
 named!(iwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"IWAD") >> (WADType::IWAD)));
 named!(pwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"PWAD") >> (WADType::PWAD)));
 
-named!(wad_header<&[u8], WADHeader>, do_parse!(
-    identification: alt!(iwad_tag | pwad_tag) >>
+named!(wad_header(&[u8]) -> WADHeader, do_parse!(
+    identification: return_error!(
+        nom::ErrorKind::Custom(1),
+        alt!(iwad_tag | pwad_tag)) >>
     numlumps: le_u32 >>
     infotableofs: le_u32 >>
     (WADHeader{ identification: identification, numlumps: numlumps, infotableofs: infotableofs })
@@ -180,22 +207,11 @@ impl<'a> WADArchive<'a> {
 
 // FIXME use Result, but, figure out how to get an actual error out of here
 // FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
-pub fn parse_wad(buf: &[u8]) -> IResult<&[u8], WADArchive> {
+pub fn parse_wad(buf: &[u8]) -> Result<WADArchive> {
     // FIXME ambiguous whether the error was from parsing the header or the entries
-    let (_, header) = try_parse!(buf, wad_header);
-
-    match wad_directory(buf, &header) {
-        IResult::Done(leftovers, entries) => {
-            let archive = WADArchive{ buffer: buf, header: header, directory: entries };
-            return IResult::Done(leftovers, archive);
-        }
-        IResult::Incomplete(needed) => {
-            return IResult::Incomplete(needed);
-        }
-        IResult::Error(err) => {
-            return IResult::Error(err);
-        }
-    }
+    let header = try!(nom_to_result(wad_header(buf)));
+    let entries = try!(nom_to_result(wad_directory(buf, &header)));
+    return Ok(WADArchive{ buffer: buf, header: header, directory: entries });
 }
 
 
@@ -219,7 +235,7 @@ const MAP_LUMP_ORDER: [(&'static str, bool); 11] = [
 
 pub struct WADMapIterator<'a> {
     archive: &'a WADArchive<'a>,
-    entry_iter: core::iter::Enumerate<std::slice::Iter<'a, WADDirectoryEntry<'a>>>,
+    entry_iter: std::iter::Enumerate<std::slice::Iter<'a, WADDirectoryEntry<'a>>>,
 }
 
 impl<'a> Iterator for WADMapIterator<'a> {
@@ -405,7 +421,7 @@ pub struct DoomVertex {
     pub y: i16,
 }
 
-named!(vertexes_lump(&[u8]) -> Vec<DoomVertex>, terminated!(many0!(do_parse!(
+named!(vertexes_lump<&[u8], Vec<DoomVertex>>, terminated!(many0!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
     (DoomVertex{ x: x, y: y })
@@ -426,7 +442,7 @@ pub struct DoomLine {
     pub back_sidedef: i16,
 }
 
-named!(doom_linedefs_lump(&[u8]) -> Vec<DoomLine>, terminated!(many0!(do_parse!(
+named!(doom_linedefs_lump<&[u8], Vec<DoomLine>>, terminated!(many0!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -456,35 +472,16 @@ pub struct BareDoomMap {
 
 
 // TODO much more error handling wow lol
-pub fn parse_doom_map(archive: &WADArchive, range: &WADMapEntryBlock) -> Option<BareDoomMap> {
-    let vertices = if let Some(vertexes_index) = range.vertexes_index {
-        let buf = archive.entry_slice(vertexes_index);
-        if let IResult::Done(_leftovers, parsed_vertices) = vertexes_lump(buf) {
-            parsed_vertices
-        }
-        else {
-            return None;
-        }
-    }
-    else {
-        return None;
-    };
+pub fn parse_doom_map(archive: &WADArchive, range: &WADMapEntryBlock) -> Result<BareDoomMap> {
+    let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
+    let buf = archive.entry_slice(vertexes_index);
+    let vertices = try!( nom_to_result(vertexes_lump(buf)) );
 
-    // TODO ugh how do i not repeat all this
-    let lines = if let Some(linedefs_index) = range.linedefs_index {
-        let buf = archive.entry_slice(linedefs_index);
-        if let IResult::Done(_leftovers, parsed_lines) = doom_linedefs_lump(buf) {
-            parsed_lines
-        }
-        else {
-            return None;
-        }
-    }
-    else {
-        return None;
-    };
+    let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
+    let buf = archive.entry_slice(linedefs_index);
+    let lines = try!( nom_to_result(doom_linedefs_lump(buf)) );
 
-    return Some(BareDoomMap{
+    return Ok(BareDoomMap{
         vertices: vertices,
         lines: lines,
         sectors: vec![],

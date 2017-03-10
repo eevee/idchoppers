@@ -4,5 +4,9 @@ version = "0.1.0"
 authors = ["Eevee (Lexy Munroe) <eevee.git@veekun.com>"]
 
 [dependencies]
-nom = "2.1.0"
+error-chain = "0.10.0"
 svg = "0.5.5"
+
+[dependencies.nom]
+version = "^2.1"
+features = ["verbose-errors"]

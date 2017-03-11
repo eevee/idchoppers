@@ -17,6 +17,7 @@ fn main() {
                 match idchoppers::parse_doom_map(&wad, &map_range) {
                     Ok(bare_map) => {
                         write_bare_map_as_svg(&bare_map);
+                        println!("wrote a map");
                     }
                     Err(err) => {
                         println!("oh noooo got an error {:?}", err);

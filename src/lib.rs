@@ -3,6 +3,7 @@ extern crate nom;
 #[macro_use]
 extern crate error_chain;
 
+use std::borrow::Cow;
 use std::str::FromStr;
 use std::str;
 use std::u8;
@@ -107,17 +108,112 @@ named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
 named!(vanilla_map_name(&[u8]) -> MapName, alt!(exmy_map_name | mapxx_map_name));
 
 
-
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum WADType {
     IWAD,
     PWAD,
 }
 
-// FIXME think about privacy here; i think it makes sense to expose all these
-// details to anyone who's interested, but i guess accessors would be good so
-// you can't totally fuck up an archive
-pub struct WADHeader {
+
+trait Archive {
+    // TODO needs a feature atm -- const supports_duplicate_names: bool;
+}
+trait WAD {}
+
+/// High-level interface to a WAD archive.  Does its best to prevent you from producing an invalid
+/// WAD.  This is probably what you want.
+pub struct WADArchive<'a> {
+    // TODO it would be nice if we could take ownership of the slice somehow, but i don't know how
+    // to do that really.  i also don't know how to tell rust that the entry slices are owned by
+    // this buffer?
+    buffer: &'a [u8],
+
+    /// Type of the WAD, either an IWAD (full standalone game) or PWAD (patch wad, a small mod).
+    pub wadtype: WADType,
+
+    // Pairs of (name, data)
+    // TODO eventually this should be an Entry, which i guess is a totally arbitrary data type.
+    // but when does the type detection happen?
+    entries: Vec<(Cow<'a, str>, Cow<'a, [u8]>)>,
+}
+impl<'a> Archive for WADArchive<'a> {
+}
+
+impl<'a> WADArchive<'a> {
+    // TODO:
+    // first_entry(name)
+    // iter_entry(name)
+    // iter_between(_start, _end)
+    // iter_maps()
+    // iter_flats()
+    // TODO interesting things:
+    // - find suspected markers that contain data
+}
+
+// TODO:
+// - get entry by name (REMEMBER: NAMES CAN REPEAT)
+// - detect entry type (using name as a hint as well)
+// - how the hell do i iterate over /either/ an entry or a map?  maybe that's not even a useful thing to do
+// things to check:
+// - error: lump outside the bounds of the wad
+// - warning: lump overlaps the directory
+// - warning: lumps overlap
+// - warning: lumps not in the same order physically as in the listing
+// - interesting: lumps have gaps
+/// Low-level interface to a parsed WAD.  This is really only useful for, uh, shenanigans.
+pub struct BareWAD<'a> {
+    pub buffer: &'a [u8],
+    pub header: BareWADHeader,
+    pub directory: Vec<BareWADDirectoryEntry<'a>>,
+}
+
+// TODO expand these into separate types, probably, so the severity can be an associated value...
+// either that or use a method with a big ol match block Ugh
+pub enum Diagnostic {
+    InvalidLumpBounds(usize, usize),
+    LumpOverlapsIndex,
+    LumpsOverlap,
+    LumpsOutOfOrder,
+    UnusedSpace,
+}
+
+impl<'a> BareWAD<'a> {
+    pub fn diagnose(&'a self) -> Vec<Diagnostic> {
+        let ret = vec![];
+        // TODO this
+        return ret;
+    }
+
+    pub fn to_archive(&'a self) -> WADArchive<'a> {
+        let entries = self.directory.iter().map(|bare_entry| (Cow::from(bare_entry.name), Cow::from(bare_entry.extract_slice(self.buffer)))).collect();
+        return WADArchive{
+            buffer: self.buffer,
+            wadtype: self.header.identification,
+            entries: entries,
+        };
+    }
+
+    pub fn entry_slice(&'a self, index: usize) -> &'a [u8] {
+        let entry = &self.directory[index];
+        let start = entry.filepos as usize;
+        let end = start + entry.size as usize;
+        return &self.buffer[start..end];
+    }
+
+    pub fn first_entry(&'a self, name: &str) -> Option<&[u8]> {
+        for entry in self.directory.iter() {
+            if entry.name == name {
+                let start = entry.filepos as usize;
+                let end = start + entry.size as usize;
+                // TODO what should this do if the offsets are bogus?
+                return Some(&self.buffer[start..end]);
+            }
+        }
+        return None;
+    }
+}
+
+pub struct BareWADHeader {
     pub identification: WADType,
     pub numlumps: u32,
     pub infotableofs: u32,
@@ -126,20 +222,29 @@ pub struct WADHeader {
 named!(iwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"IWAD") >> (WADType::IWAD)));
 named!(pwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"PWAD") >> (WADType::PWAD)));
 
-named!(wad_header(&[u8]) -> WADHeader, do_parse!(
+named!(wad_header(&[u8]) -> BareWADHeader, do_parse!(
     identification: return_error!(
         nom::ErrorKind::Custom(1),
         alt!(iwad_tag | pwad_tag)) >>
     numlumps: le_u32 >>
     infotableofs: le_u32 >>
-    (WADHeader{ identification: identification, numlumps: numlumps, infotableofs: infotableofs })
+    (BareWADHeader{ identification: identification, numlumps: numlumps, infotableofs: infotableofs })
 ));
 
 
-pub struct WADDirectoryEntry<'a> {
+pub struct BareWADDirectoryEntry<'a> {
     pub filepos: u32,
     pub size: u32,
     pub name: &'a str,
+}
+
+impl<'a> BareWADDirectoryEntry<'a> {
+    /// Extract the slice described by this entry from a buffer.
+    pub fn extract_slice(&'a self, buf: &'a [u8]) -> &'a [u8] {
+        let start = self.filepos as usize;
+        let end = start + self.size as usize;
+        return &buf[start..end];
+    }
 }
 
 fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
@@ -164,15 +269,14 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     }
 }
 
-named!(wad_entry(&[u8]) -> WADDirectoryEntry, do_parse!(
+named!(wad_entry(&[u8]) -> BareWADDirectoryEntry, do_parse!(
     filepos: le_u32 >>
     size: le_u32 >>
     name: apply!(fixed_length_ascii, 8) >>
-    // FIXME the name is ascii, not utf-8, and is zero-padded
-    (WADDirectoryEntry{ filepos: filepos, size: size, name: name })
+    (BareWADDirectoryEntry{ filepos: filepos, size: size, name: name })
 ));
 
-fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec<WADDirectoryEntry<'a>>> {
+fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8], Vec<BareWADDirectoryEntry<'a>>> {
     let lumpct = header.numlumps as usize;
     let offset = header.infotableofs as usize;
     // TODO can i unhardcode the size of a wad entry here?
@@ -192,31 +296,9 @@ fn wad_directory<'a>(buf: &'a [u8], header: &WADHeader) -> IResult<&'a [u8], Vec
 }
 
 
-// TODO:
-// - get entry by name (REMEMBER: NAMES CAN REPEAT)
-// - detect entry type (using name as a hint as well)
-// - how the hell do i iterate over /either/ an entry or a map?  maybe that's not even a useful thing to do
-pub struct WADArchive<'a> {
-    pub buffer: &'a [u8],
-    pub header: WADHeader,
-    pub directory: Vec<WADDirectoryEntry<'a>>,
-}
-
-pub struct WADEntry<'a> {
-    pub archive: &'a WADArchive<'a>,
-    pub index: usize,
-}
-
-impl<'a> WADArchive<'a> {
+impl<'a> BareWAD<'a> {
     pub fn iter_maps(&'a self) -> WADMapIterator<'a> {
         return WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate() };
-    }
-
-    pub fn entry_slice(&'a self, index: usize) -> &'a [u8] {
-        let entry = &self.directory[index];
-        let start = entry.filepos as usize;
-        let end = start + entry.size as usize;
-        return &self.buffer[start..end];
     }
 }
 
@@ -229,11 +311,11 @@ impl<'a> WADArchive<'a> {
 
 // FIXME use Result, but, figure out how to get an actual error out of here
 // FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
-pub fn parse_wad(buf: &[u8]) -> Result<WADArchive> {
+pub fn parse_wad(buf: &[u8]) -> Result<BareWAD> {
     // FIXME ambiguous whether the error was from parsing the header or the entries
     let header = try!(nom_to_result(wad_header(buf)));
     let entries = try!(nom_to_result(wad_directory(buf, &header)));
-    return Ok(WADArchive{ buffer: buf, header: header, directory: entries });
+    return Ok(BareWAD{ buffer: buf, header: header, directory: entries });
 }
 
 
@@ -256,8 +338,8 @@ const MAP_LUMP_ORDER: [(&'static str, bool); 11] = [
 ];
 
 pub struct WADMapIterator<'a> {
-    archive: &'a WADArchive<'a>,
-    entry_iter: std::iter::Enumerate<std::slice::Iter<'a, WADDirectoryEntry<'a>>>,
+    archive: &'a BareWAD<'a>,
+    entry_iter: std::iter::Enumerate<std::slice::Iter<'a, BareWADDirectoryEntry<'a>>>,
 }
 
 impl<'a> Iterator for WADMapIterator<'a> {
@@ -508,7 +590,7 @@ pub struct BareDoomMap {
 
 
 // TODO much more error handling wow lol
-pub fn parse_doom_map(archive: &WADArchive, range: &WADMapEntryBlock) -> Result<BareDoomMap> {
+pub fn parse_doom_map(archive: &BareWAD, range: &WADMapEntryBlock) -> Result<BareDoomMap> {
     let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
     let buf = archive.entry_slice(vertexes_index);
     let vertices = try!( nom_to_result(vertexes_lump(buf)) );

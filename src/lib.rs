@@ -53,6 +53,15 @@ pub enum MapName {
     MAPxx(u8),
 }
 
+impl std::fmt::Display for MapName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            MapName::ExMy(x, y) => write!(f, "E{}M{}", x, y),
+            MapName::MAPxx(x) => write!(f, "MAP{:02}", x),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MapFormat {
     Doom,
@@ -299,7 +308,7 @@ fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8],
 
 impl<'a> BareWAD<'a> {
     pub fn iter_maps(&'a self) -> WADMapIterator<'a> {
-        return WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate() };
+        return WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate().peekable() };
     }
 }
 
@@ -340,7 +349,7 @@ const MAP_LUMP_ORDER: [(&'static str, bool); 11] = [
 
 pub struct WADMapIterator<'a> {
     archive: &'a BareWAD<'a>,
-    entry_iter: std::iter::Enumerate<std::slice::Iter<'a, BareWADDirectoryEntry<'a>>>,
+    entry_iter: std::iter::Peekable<std::iter::Enumerate<std::slice::Iter<'a, BareWADDirectoryEntry<'a>>>>,
 }
 
 impl<'a> Iterator for WADMapIterator<'a> {
@@ -384,8 +393,9 @@ impl<'a> Iterator for WADMapIterator<'a> {
 
         let mut i;
         let mut entry;
-        match self.entry_iter.next() {
-            Some((next_i, next_entry)) => {
+        // Use peeking here, so that if we stumble onto the next map header, we don't consume it
+        match self.entry_iter.peek() {
+            Some(&(next_i, next_entry)) => {
                 i = next_i;
                 entry = next_entry;
             }
@@ -424,8 +434,9 @@ impl<'a> Iterator for WADMapIterator<'a> {
                         break;
                     }
                 }
-                match self.entry_iter.next() {
-                    Some((next_i, next_entry)) => {
+                self.entry_iter.next();
+                match self.entry_iter.peek() {
+                    Some(&(next_i, next_entry)) => {
                         i = next_i;
                         entry = next_entry;
                     }

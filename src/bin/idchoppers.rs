@@ -32,11 +32,14 @@ fn run() -> Result<()> {
     for map_range in wad.iter_maps() {
         let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
         match bare_map {
-            idchoppers::BareMap::Doom(map) => write_bare_map_as_svg(&map),
-            idchoppers::BareMap::Hexen(map) => write_bare_map_as_svg(&map),
+            // TODO interesting diagnostic: mix of map formats in the same wad
+            idchoppers::BareMap::Doom(map) => {
+                println!("{} - Doom format map", map_range.name);
+            }
+            idchoppers::BareMap::Hexen(map) => {
+                println!("{} - Hexen format map", map_range.name);
+            }
         }
-        println!("wrote a map");
-        break;
     }
 
     Ok(())

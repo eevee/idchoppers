@@ -12,6 +12,7 @@ use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32};
 
 pub mod errors;
 use errors::{ErrorKind, Result};
+pub mod universe;
 
 
 
@@ -445,39 +446,6 @@ impl<'a> Iterator for WADMapIterator<'a> {
         return Some(range);
     }
 }
-// FIXME should this really be a list of general lump types?
-// FIXME not actually used lol
-/// List of lumps that can appear in a (non-UDMF) map, in this order.
-enum MapLumps {
-    /// A marker that provides the map name, usually ExMy or MAPxx.  Generally
-    /// empty, although FraggleScript is put in this lump.
-	Marker,             // A separator, name, ExMx or MAPxx
-
-    /// List of things (actors) in the map.  Format is different for Doom
-    /// versus Hexen maps.
-    Things,
-
-    /// List of lines in the map.  Format is different for Doom versus Hexen
-    /// maps.
-    Linedefs,
-
-    /// List of sidedefs in the map, the front and back sides of a line.
-    Sidedefs,
-
-    /// List of vertices in the map.
-    Vertexes,
-
-    Segs,
-    Subsectors,
-    Nodes,
-    Sectors,
-    Reject,
-    Blockmap,
-    Behavior,
-    Conversation,
-
-    // FIXME: also, ZNODES, GLZNODES, and of course TEXTMAP and ENDMAP
-}
 
 pub struct WADMapEntryBlock {
     pub format: MapFormat,
@@ -515,15 +483,16 @@ pub struct WADMapEntryBlock {
 // - put all this in its own module/hierarchy
 
 // FIXME: vertices are i16 for vanilla, 15/16 fixed for ps/n64, effectively infinite but really f32 for udmf
-pub struct DoomVertex {
+#[derive(Debug)]
+pub struct BareVertex {
     pub x: i16,
     pub y: i16,
 }
 
-named!(vertexes_lump<&[u8], Vec<DoomVertex>>, terminated!(many0!(do_parse!(
+named!(vertexes_lump<&[u8], Vec<BareVertex>>, terminated!(many0!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
-    (DoomVertex{ x: x, y: y })
+    (BareVertex{ x: x, y: y })
 )), eof!()));
 
 
@@ -541,7 +510,7 @@ pub struct DoomLine {
     pub back_sidedef: i16,
 }
 
-named!(doom_linedefs_lump<&[u8], Vec<DoomLine>>, terminated!(many0!(do_parse!(
+named!(doom_linedefs_lump(&[u8]) -> Vec<DoomLine>, terminated!(many0!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -550,6 +519,25 @@ named!(doom_linedefs_lump<&[u8], Vec<DoomLine>>, terminated!(many0!(do_parse!(
     front_sidedef: le_i16 >>
     back_sidedef: le_i16 >>
     (DoomLine{ v0: v0, v1: v1, flags: flags, special: special, sector_tag: sector_tag, front_sidedef: front_sidedef, back_sidedef: back_sidedef })
+)), eof!()));
+
+pub struct DoomSide<'a> {
+    pub x_offset: i16,
+    pub y_offset: i16,
+    pub upper_texture: &'a str,
+    pub lower_texture: &'a str,
+    pub middle_texture: &'a str,
+    pub sector: i16,
+}
+
+named!(sidedefs_lump(&[u8]) -> Vec<DoomSide>, terminated!(many0!(do_parse!(
+    x_offset: le_i16 >>
+    y_offset: le_i16 >>
+    upper_texture: apply!(fixed_length_ascii, 8) >>
+    lower_texture: apply!(fixed_length_ascii, 8) >>
+    middle_texture: apply!(fixed_length_ascii, 8) >>
+    sector: le_i16 >>
+    (DoomSide{ x_offset: x_offset, y_offset: y_offset, upper_texture: upper_texture, lower_texture: lower_texture, middle_texture: middle_texture, sector: sector })
 )), eof!()));
 
 pub struct DoomThing {
@@ -573,31 +561,66 @@ named!(doom_things_lump(&[u8]) -> Vec<DoomThing>, terminated!(many0!(do_parse!(
 )), eof!()));
 
 
-pub struct DoomSide {}
-pub struct DoomSector {}
+pub struct BareSector<'a> {
+    pub floor_height: i16,
+    pub ceiling_height: i16,
+    pub floor_texture: &'a str,
+    pub ceiling_texture: &'a str,
+    pub light: i16,  // XXX what??  light can only go up to 255!
+    pub sector_type: i16,  // TODO check if these are actually signed or what
+    pub sector_tag: i16,
+}
+
+named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(
+    floor_height: le_i16 >>
+    ceiling_height: le_i16 >>
+    floor_texture: apply!(fixed_length_ascii, 8) >>
+    ceiling_texture: apply!(fixed_length_ascii, 8) >>
+    light: le_i16 >>
+    sector_type: le_i16 >>
+    sector_tag: le_i16 >>
+    (BareSector{
+        floor_height: floor_height,
+        ceiling_height: ceiling_height,
+        floor_texture: floor_texture,
+        ceiling_texture: ceiling_texture,
+        light: light,
+        sector_type: sector_type,
+        sector_tag: sector_tag,
+    })
+)), eof!()));
+
 
 /// The result of parsing a Doom-format map definition.  The contained
 /// structures have not been changed in any way.  Everything is public, and
 /// nothing is preventing you from meddling with the contained data in a way
 /// that might make it invalid.
-pub struct BareDoomMap {
-    pub vertices: Vec<DoomVertex>,
-    pub sectors: Vec<DoomSector>,
-    pub sides: Vec<DoomSide>,
+pub struct BareDoomMap<'a> {
+    pub vertices: Vec<BareVertex>,
+    pub sectors: Vec<BareSector<'a>>,
+    pub sides: Vec<DoomSide<'a>>,
     pub lines: Vec<DoomLine>,
     pub things: Vec<DoomThing>,
 }
 
 
 // TODO much more error handling wow lol
-pub fn parse_doom_map(archive: &BareWAD, range: &WADMapEntryBlock) -> Result<BareDoomMap> {
+pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareDoomMap<'a>> {
     let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
     let buf = archive.entry_slice(vertexes_index);
     let vertices = try!( nom_to_result(vertexes_lump(buf)) );
 
+    let sectors_index = try!( range.sectors_index.ok_or(ErrorKind::MissingMapLump("SECTORS")) );
+    let buf = archive.entry_slice(sectors_index);
+    let sectors = try!( nom_to_result(sectors_lump(buf)) );
+
     let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
     let buf = archive.entry_slice(linedefs_index);
     let lines = try!( nom_to_result(doom_linedefs_lump(buf)) );
+
+    let sidedefs_index = try!( range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS")) );
+    let buf = archive.entry_slice(sidedefs_index);
+    let sides = try!( nom_to_result(sidedefs_lump(buf)) );
 
     let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
     let buf = archive.entry_slice(things_index);
@@ -605,13 +628,141 @@ pub fn parse_doom_map(archive: &BareWAD, range: &WADMapEntryBlock) -> Result<Bar
 
     return Ok(BareDoomMap{
         vertices: vertices,
+        sectors: sectors,
+        sides: sides,
         lines: lines,
-        sectors: vec![],
-        sides: vec![],
         things: things,
     });
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum Facing {
+    Front,
+    Back,
+}
+
+use std::collections::HashMap;
+impl<'a> BareDoomMap<'a> {
+    // TODO this is a horrible fucking mess.  but it's a /contained/ horrible fucking mess, so.
+    pub fn sector_to_polygons(&'a self, s: usize) -> Vec<Vec<&'a BareVertex>> {
+        struct Edge<'a> {
+            line: &'a DoomLine,
+            side: &'a DoomSide<'a>,
+            facing: Facing,
+            v0: &'a BareVertex,
+            v1: &'a BareVertex,
+            done: bool,
+        }
+        // This is just to convince HashMap to hash on the actual reference, not the underlying
+        // BareVertex value
+        struct VertexRef<'a>(&'a BareVertex);
+        impl<'a> PartialEq for VertexRef<'a> {
+            fn eq(&self, other: &VertexRef) -> bool {
+                return (self.0 as *const _) == (other.0 as *const _);
+            }
+        }
+        impl<'a> Eq for VertexRef<'a> {}
+        impl<'a> std::hash::Hash for VertexRef<'a> {
+            fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+                (self.0 as *const _).hash(state)
+            }
+        }
+
+        let mut edges = vec![];
+        let mut vertices_to_edges = HashMap::new();
+        // TODO linear scan
+        for line in self.lines.iter() {
+            // TODO an iterator over all sides would be nice i suppose
+            for &(sidedef, facing) in [(line.front_sidedef, Facing::Front), (line.back_sidedef, Facing::Back)].iter() {
+                if sidedef == -1 {
+                    continue;
+                }
+
+                // TODO this and the vertices lookups might be bogus and crash...
+                let side = &self.sides[sidedef as usize];
+                if side.sector as usize == s {
+                    let edge = Edge{
+                        line: line,
+                        side: side,
+                        facing: facing,
+                        // TODO should these be swapped depending on the line facing?
+                        v0: &self.vertices[line.v0 as usize],
+                        v1: &self.vertices[line.v1 as usize],
+                        done: false,
+                    };
+                    edges.push(edge);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[line.v0 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[line.v1 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                }
+            }
+        }
+
+        // Trace sectors by starting at the first side's first vertex and attempting to walk from
+        // there
+        let mut outlines = Vec::new();
+        let mut seen_vertices = HashMap::new();
+        while edges.len() > 0 {
+            let mut next_vertices = vec![];
+            for edge in edges.iter() {
+                // TODO having done-ness for both edges and vertices seems weird, idk
+                if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
+                    next_vertices.push(edge.v0);
+                    break;
+                }
+                if !seen_vertices.contains_key(&VertexRef(edge.v1)) {
+                    next_vertices.push(edge.v1);
+                    break;
+                }
+            }
+            if next_vertices.len() == 0 {
+                break;
+            }
+
+            let mut outline = Vec::new();
+            while next_vertices.len() > 0 {
+                let mut vertices = next_vertices;
+                next_vertices = Vec::new();
+                for vertex in vertices.iter() {
+                    if seen_vertices.contains_key(&VertexRef(vertex)) {
+                        continue;
+                    }
+                    seen_vertices.insert(VertexRef(vertex), true);
+                    outline.push(*vertex);
+
+                    // TODO so, problems occur here if:
+                    // - a vertex has more than two edges
+                    //   - special case: double-sided edges are OK!  but we have to eliminate
+                    //   those, WITHOUT ruining entirely self-referencing sectors
+                    // - a vertex has one edge
+                    for e in vertices_to_edges.get(&VertexRef(vertex)).unwrap().iter() {
+                        let edge = &mut edges[*e];
+                        if edge.done {
+                            // TODO actually this seems weird?  why would this happen.
+                            continue;
+                        }
+                        edge.done = true;
+                        if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
+                            outline.push(edge.v0);
+                            next_vertices.push(edge.v0);
+                        }
+                        else if !seen_vertices.contains_key(&VertexRef(edge.v1)) {
+                            outline.push(edge.v1);
+                            next_vertices.push(edge.v1);
+                        }
+                        // Only add EXACTLY ONE vertex at a time for now -- so, assuming simple
+                        // polygons!  Figure out the rest, uh, later.
+                        break;
+                    }
+                }
+            }
+            if outline.len() > 0 {
+                outlines.push(outline);
+            }
+        }
+
+        return outlines;
+    }
+}
 
 
 #[cfg(test)]

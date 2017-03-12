@@ -1,0 +1,31 @@
+.line.zero-sided {
+    stroke: red;
+    stroke-width: 2;
+}
+.line.one-sided {
+    stroke: black;
+    stroke-width: 2;
+}
+.line.two-sided {
+    stroke: #999;
+    stroke-width: 1;
+}
+.line.has-special {
+    stroke: #04f;
+}
+
+.sector {
+    fill: transparent;
+    stroke: transparent;
+}
+.sector.secret {
+    fill: rgba(100%, 0%, 100%, 0.25);
+}
+.sector.tagged {
+    fill: rgba(100%, 50%, 0%, 0.25);
+}
+.sector:hover {
+    stroke-width: 4;
+    stroke: rgba(100%, 100%, 0%, 0.5);
+    fill: rgba(100%, 100%, 0%, 0.25);
+}

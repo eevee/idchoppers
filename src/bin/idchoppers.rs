@@ -1,36 +1,42 @@
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 
 extern crate idchoppers;
+use idchoppers::errors::Result;
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
 use svg::node::element::{Circle, Group, Line, Path, Rectangle, Style};
 use svg::node::element::path::Data;
+extern crate termcolor;
+use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 fn main() {
+    match run() {
+        Ok(()) => {}
+        Err(err) => {
+            let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+            stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
+            write!(&mut stderr, "error: ");
+            stderr.set_color(&ColorSpec::new());
+            writeln!(&mut stderr, "{}", err);
+        }
+    }
+}
+
+fn run() -> Result<()> {
     let mut buf = Vec::new();
     io::stdin().read_to_end(&mut buf);
 
-    match idchoppers::parse_wad(buf.as_slice()) {
-        Ok(wad) => {
-            println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
-            for map_range in wad.iter_maps() {
-                match idchoppers::parse_doom_map(&wad, &map_range) {
-                    Ok(bare_map) => {
-                        write_bare_map_as_svg(&bare_map);
-                        println!("wrote a map");
-                    }
-                    Err(err) => {
-                        println!("oh noooo got an error {:?}", err);
-                    }
-                }
-                break;
-            }
-        }
-        Err(err) => {
-            println!("oh no, an error {:?}", err.description());
-        }
+    let wad = try!(idchoppers::parse_wad(buf.as_slice()));
+    println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
+    for map_range in wad.iter_maps() {
+        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        write_bare_map_as_svg(&bare_map);
+        println!("wrote a map");
+        break;
     }
+
+    Ok(())
 }
 
 fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {

@@ -6,9 +6,9 @@ error_chain! {
             description("nonspecific parse error")
             display("nonspecific parse error")
         }
-        TruncatedData {
-            description("oh no data")
-            display("oh no data")
+        TruncatedData(whence: &'static str) {
+            description("unexpected end of input")
+            display("unexpected end of input while parsing {}", whence)
         }
         InvalidMagic {
             description("invalid magic")

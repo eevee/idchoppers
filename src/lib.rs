@@ -60,14 +60,13 @@ pub enum MapFormat {
 }
 
 
-fn nom_to_result<I, O>(result: IResult<I, O>) -> Result<O> {
+fn nom_to_result<I, O>(whence: &'static str, result: IResult<I, O>) -> Result<O> {
     match result {
         IResult::Done(_, value) => {
             return Ok(value);
         }
         IResult::Incomplete(needed) => {
-            // TODO what is incomplete, exactly?  where did we run out of data?
-            bail!(ErrorKind::TruncatedData);
+            bail!(ErrorKind::TruncatedData(whence));
         }
         IResult::Error(err) => {
             let error_kind = match err {
@@ -314,8 +313,8 @@ impl<'a> BareWAD<'a> {
 // FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
 pub fn parse_wad(buf: &[u8]) -> Result<BareWAD> {
     // FIXME ambiguous whether the error was from parsing the header or the entries
-    let header = try!(nom_to_result(wad_header(buf)));
-    let entries = try!(nom_to_result(wad_directory(buf, &header)));
+    let header = try!(nom_to_result("wad header", wad_header(buf)));
+    let entries = try!(nom_to_result("wad index", wad_directory(buf, &header)));
     return Ok(BareWAD{ buffer: buf, header: header, directory: entries });
 }
 
@@ -608,23 +607,23 @@ pub struct BareDoomMap<'a> {
 pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareDoomMap<'a>> {
     let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
     let buf = archive.entry_slice(vertexes_index);
-    let vertices = try!( nom_to_result(vertexes_lump(buf)) );
+    let vertices = try!( nom_to_result("VERTEXES lump", vertexes_lump(buf)) );
 
     let sectors_index = try!( range.sectors_index.ok_or(ErrorKind::MissingMapLump("SECTORS")) );
     let buf = archive.entry_slice(sectors_index);
-    let sectors = try!( nom_to_result(sectors_lump(buf)) );
+    let sectors = try!( nom_to_result("SECTORS lump", sectors_lump(buf)) );
 
     let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
     let buf = archive.entry_slice(linedefs_index);
-    let lines = try!( nom_to_result(doom_linedefs_lump(buf)) );
+    let lines = try!( nom_to_result("LINEDEFS lump", doom_linedefs_lump(buf)) );
 
     let sidedefs_index = try!( range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS")) );
     let buf = archive.entry_slice(sidedefs_index);
-    let sides = try!( nom_to_result(sidedefs_lump(buf)) );
+    let sides = try!( nom_to_result("SIDEDEFS lump", sidedefs_lump(buf)) );
 
     let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
     let buf = archive.entry_slice(things_index);
-    let things = try!( nom_to_result(doom_things_lump(buf)) );
+    let things = try!( nom_to_result("THINGS lump", doom_things_lump(buf)) );
 
     return Ok(BareDoomMap{
         vertices: vertices,

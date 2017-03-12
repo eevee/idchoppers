@@ -5,6 +5,8 @@ authors = ["Eevee (Lexy Munroe) <eevee.git@veekun.com>"]
 
 [dependencies]
 error-chain = "0.10.0"
+# TODO uhh how do i separate the binary deps from the library deps?
+termcolor = "^0.3"
 svg = "^0.5"
 
 [dependencies.nom]

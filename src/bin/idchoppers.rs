@@ -42,6 +42,13 @@ fn run() -> Result<()> {
         }
     }
 
+    // FIXME this also catches F1_START etc, dammit
+    /*
+    for entry in wad.iter_entries_between("F_START", "F_END") {
+        println!("{}", entry.name);
+    }
+    */
+
     Ok(())
 }
 

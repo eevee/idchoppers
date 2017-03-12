@@ -125,10 +125,20 @@ pub enum WADType {
 }
 
 
+// TODO do...  these
 trait Archive {
     // TODO needs a feature atm -- const supports_duplicate_names: bool;
 }
-trait WAD {}
+trait WAD {
+
+}
+
+// TODO this should be able to contain an arbitrarily-typed entry, right?  but when does the type
+// detection happen?
+pub struct WADEntry<'a> {
+    pub name: Cow<'a, str>,
+    pub data: Cow<'a, [u8]>,
+}
 
 /// High-level interface to a WAD archive.  Does its best to prevent you from producing an invalid
 /// WAD.  This is probably what you want.
@@ -142,9 +152,7 @@ pub struct WADArchive<'a> {
     pub wadtype: WADType,
 
     // Pairs of (name, data)
-    // TODO eventually this should be an Entry, which i guess is a totally arbitrary data type.
-    // but when does the type detection happen?
-    entries: Vec<(Cow<'a, str>, Cow<'a, [u8]>)>,
+    entries: Vec<WADEntry<'a>>,
 }
 impl<'a> Archive for WADArchive<'a> {
 }
@@ -195,7 +203,7 @@ impl<'a> BareWAD<'a> {
     }
 
     pub fn to_archive(&'a self) -> WADArchive<'a> {
-        let entries = self.directory.iter().map(|bare_entry| (Cow::from(bare_entry.name), Cow::from(bare_entry.extract_slice(self.buffer)))).collect();
+        let entries = self.directory.iter().map(|bare_entry| WADEntry{ name: Cow::from(bare_entry.name), data: Cow::from(bare_entry.extract_slice(self.buffer))} ).collect();
         return WADArchive{
             buffer: self.buffer,
             wadtype: self.header.identification,
@@ -217,6 +225,44 @@ impl<'a> BareWAD<'a> {
                 let end = start + entry.size as usize;
                 // TODO what should this do if the offsets are bogus?
                 return Some(&self.buffer[start..end]);
+            }
+        }
+        return None;
+    }
+
+    pub fn iter_entries_between(&'a self, begin_marker: &'a str, end_marker: &'a str) -> BareWADBetweenIterator<'a> {
+        BareWADBetweenIterator{
+            bare_wad: self,
+            entry_iter: self.directory.iter(),
+            begin_marker: begin_marker,
+            end_marker: end_marker,
+            between_markers: false,
+        }
+    }
+}
+pub struct BareWADBetweenIterator<'a> {
+    bare_wad: &'a BareWAD<'a>,
+    entry_iter: std::slice::Iter<'a, BareWADDirectoryEntry<'a>>,
+    begin_marker: &'a str,
+    end_marker: &'a str,
+    between_markers: bool,
+}
+impl<'a> Iterator for BareWADBetweenIterator<'a> {
+    type Item = WADEntry<'a>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while let Some(entry) = self.entry_iter.next() {
+            if entry.name == self.begin_marker {
+                self.between_markers = true;
+            }
+            else if entry.name == self.end_marker {
+                self.between_markers = false;
+            }
+            else if self.between_markers {
+                return Some(WADEntry{
+                    name: Cow::from(entry.name),
+                    data: Cow::from(entry.extract_slice(self.bare_wad.buffer)),
+                });
             }
         }
         return None;

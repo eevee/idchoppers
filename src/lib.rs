@@ -8,7 +8,7 @@ use std::str::FromStr;
 use std::str;
 use std::u8;
 
-use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32};
+use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32, le_u8};
 
 pub mod errors;
 use errors::{ErrorKind, Result};
@@ -53,6 +53,7 @@ pub enum MapName {
     MAPxx(u8),
 }
 
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum MapFormat {
     Doom,
     Hexen,
@@ -412,7 +413,11 @@ impl<'a> Iterator for WADMapIterator<'a> {
                     "SECTORS" => { range.sectors_index = Some(i); }
                     "REJECT" => { range.reject_index = Some(i); }
                     "BLOCKMAP" => { range.blockmap_index = Some(i); }
-                    "BEHAVIOR" => { range.behavior_index = Some(i); }
+                    "BEHAVIOR" => {
+                        range.behavior_index = Some(i);
+                        // The presence of a BEHAVIOR lump is the sole indication of Hexen format
+                        range.format = MapFormat::Hexen;
+                    }
                     "TEXTMAP" => { range.textmap_index = Some(i); }
                     _ => {
                         // TODO wait, what's the right thing here
@@ -446,6 +451,7 @@ impl<'a> Iterator for WADMapIterator<'a> {
     }
 }
 
+#[derive(Debug)]
 pub struct WADMapEntryBlock {
     pub format: MapFormat,
     pub name: MapName,  // TODO what are the rules in zdoom?  can you really use any map name?
@@ -481,6 +487,198 @@ pub struct WADMapEntryBlock {
 //   - BLOCKMAP (deferrable)
 // - put all this in its own module/hierarchy
 
+named!(hexen_args(&[u8]) -> [u8; 5], do_parse!(
+    arg0: le_u8 >>
+    arg1: le_u8 >>
+    arg2: le_u8 >>
+    arg3: le_u8 >>
+    arg4: le_u8 >>
+    ([arg0, arg1, arg2, arg3, arg4])
+));
+
+pub struct BareDoomThing {
+    pub x: i16,
+    pub y: i16,
+    // TODO what is this
+    pub angle: i16,
+    pub doomednum: i16,
+    // NOTE: boom added two flags, and mbf one more, so this is a decent signal for targeting those (but not 100%)
+    pub flags: u16,
+}
+
+// TODO totally different in hexen
+named!(doom_things_lump(&[u8]) -> Vec<BareDoomThing>, terminated!(many0!(do_parse!(
+    x: le_i16 >>
+    y: le_i16 >>
+    angle: le_i16 >>
+    doomednum: le_i16 >>
+    flags: le_u16 >>
+    (BareDoomThing{ x: x, y: y, angle: angle, doomednum: doomednum, flags: flags })
+)), eof!()));
+
+pub struct BareHexenThing {
+    // TODO is this really signed in hexen?
+    pub tid: i16,
+    pub x: i16,
+    pub y: i16,
+    pub z: i16,
+    // TODO what is this
+    pub angle: i16,
+    pub doomednum: i16,
+    pub flags: u16,
+    pub special: u8,
+    pub args: [u8; 5],
+}
+
+// TODO totally different in hexen
+named!(hexen_things_lump(&[u8]) -> Vec<BareHexenThing>, terminated!(many0!(do_parse!(
+    tid: le_i16 >>
+    x: le_i16 >>
+    y: le_i16 >>
+    z: le_i16 >>
+    angle: le_i16 >>
+    doomednum: le_i16 >>
+    flags: le_u16 >>
+    special: le_u8 >>
+    args: hexen_args >>
+    (BareHexenThing{
+        tid: tid,
+        x: x,
+        y: y,
+        z: z,
+        angle: angle,
+        doomednum: doomednum,
+        flags: flags,
+        special: special,
+        args: args,
+    })
+)), eof!()));
+
+pub trait BareBinaryThing {
+    fn coords(&self) -> (i16, i16);
+    fn doomednum(&self) -> i16;
+}
+impl BareBinaryThing for BareDoomThing {
+    fn coords(&self) -> (i16, i16) {
+        (self.x, self.y)
+    }
+    fn doomednum(&self) -> i16 {
+        self.doomednum
+    }
+}
+impl BareBinaryThing for BareHexenThing {
+    fn coords(&self) -> (i16, i16) {
+        (self.x, self.y)
+    }
+    fn doomednum(&self) -> i16 {
+        self.doomednum
+    }
+}
+
+
+// FIXME vertex/sidedef indices are i16 in vanilla, but extended to u16 in most source ports; note that for true vanilla, a negative index makes no sense anyway
+// FIXME hexen extends this, which requires detecting hexen format
+// FIXME what exactly is the higher-level structure that holds actual references to the sidedefs?
+pub struct BareDoomLine {
+    pub v0: i16,
+    pub v1: i16,
+    pub flags: i16,
+    pub special: i16,
+    pub sector_tag: i16,
+    // NOTE: -1 to mean none
+    pub front_sidedef: i16,
+    pub back_sidedef: i16,
+}
+
+named!(doom_linedefs_lump(&[u8]) -> Vec<BareDoomLine>, terminated!(many0!(do_parse!(
+    v0: le_i16 >>
+    v1: le_i16 >>
+    flags: le_i16 >>
+    special: le_i16 >>
+    sector_tag: le_i16 >>
+    front_sidedef: le_i16 >>
+    back_sidedef: le_i16 >>
+    (BareDoomLine{ v0: v0, v1: v1, flags: flags, special: special, sector_tag: sector_tag, front_sidedef: front_sidedef, back_sidedef: back_sidedef })
+)), eof!()));
+
+// TODO source ports extended ids to unsigned here too
+pub struct BareHexenLine {
+    pub v0: i16,
+    pub v1: i16,
+    pub flags: i16,
+    pub special: u8,
+    pub args: [u8; 5],
+    // NOTE: -1 to mean none
+    pub front_sidedef: i16,
+    pub back_sidedef: i16,
+}
+
+named!(hexen_linedefs_lump(&[u8]) -> Vec<BareHexenLine>, terminated!(many0!(do_parse!(
+    v0: le_i16 >>
+    v1: le_i16 >>
+    flags: le_i16 >>
+    special: le_u8 >>
+    args: hexen_args >>
+    front_sidedef: le_i16 >>
+    back_sidedef: le_i16 >>
+    (BareHexenLine{
+        v0: v0,
+        v1: v1,
+        flags: flags,
+        special: special,
+        args: args,
+        front_sidedef: front_sidedef,
+        back_sidedef: back_sidedef,
+    })
+)), eof!()));
+
+pub trait BareBinaryLine {
+    fn vertex_indices(&self) -> (i16, i16);
+    fn side_indices(&self) -> (i16, i16);
+    fn has_special(&self) -> bool;
+}
+impl BareBinaryLine for BareDoomLine {
+    fn vertex_indices(&self) -> (i16, i16) {
+        (self.v0, self.v1)
+    }
+    fn side_indices(&self) -> (i16, i16) {
+        (self.front_sidedef, self.back_sidedef)
+    }
+    fn has_special(&self) -> bool {
+        self.special != 0
+    }
+}
+impl BareBinaryLine for BareHexenLine {
+    fn vertex_indices(&self) -> (i16, i16) {
+        (self.v0, self.v1)
+    }
+    fn side_indices(&self) -> (i16, i16) {
+        (self.front_sidedef, self.back_sidedef)
+    }
+    fn has_special(&self) -> bool {
+        self.special != 0
+    }
+}
+
+pub struct BareSide<'a> {
+    pub x_offset: i16,
+    pub y_offset: i16,
+    pub upper_texture: &'a str,
+    pub lower_texture: &'a str,
+    pub middle_texture: &'a str,
+    pub sector: i16,
+}
+
+named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, terminated!(many0!(do_parse!(
+    x_offset: le_i16 >>
+    y_offset: le_i16 >>
+    upper_texture: apply!(fixed_length_ascii, 8) >>
+    lower_texture: apply!(fixed_length_ascii, 8) >>
+    middle_texture: apply!(fixed_length_ascii, 8) >>
+    sector: le_i16 >>
+    (BareSide{ x_offset: x_offset, y_offset: y_offset, upper_texture: upper_texture, lower_texture: lower_texture, middle_texture: middle_texture, sector: sector })
+)), eof!()));
+
 // FIXME: vertices are i16 for vanilla, 15/16 fixed for ps/n64, effectively infinite but really f32 for udmf
 #[derive(Debug)]
 pub struct BareVertex {
@@ -494,70 +692,6 @@ named!(vertexes_lump<&[u8], Vec<BareVertex>>, terminated!(many0!(do_parse!(
     (BareVertex{ x: x, y: y })
 )), eof!()));
 
-
-// FIXME vertex/sidedef indices are i16 in vanilla, but extended to u16 in most source ports; note that for true vanilla, a negative index makes no sense anyway
-// FIXME hexen extends this, which requires detecting hexen format
-// FIXME what exactly is the higher-level structure that holds actual references to the sidedefs?
-pub struct DoomLine {
-    pub v0: i16,
-    pub v1: i16,
-    pub flags: i16,
-    pub special: i16,
-    pub sector_tag: i16,
-    // NOTE: -1 to mean none
-    pub front_sidedef: i16,
-    pub back_sidedef: i16,
-}
-
-named!(doom_linedefs_lump(&[u8]) -> Vec<DoomLine>, terminated!(many0!(do_parse!(
-    v0: le_i16 >>
-    v1: le_i16 >>
-    flags: le_i16 >>
-    special: le_i16 >>
-    sector_tag: le_i16 >>
-    front_sidedef: le_i16 >>
-    back_sidedef: le_i16 >>
-    (DoomLine{ v0: v0, v1: v1, flags: flags, special: special, sector_tag: sector_tag, front_sidedef: front_sidedef, back_sidedef: back_sidedef })
-)), eof!()));
-
-pub struct DoomSide<'a> {
-    pub x_offset: i16,
-    pub y_offset: i16,
-    pub upper_texture: &'a str,
-    pub lower_texture: &'a str,
-    pub middle_texture: &'a str,
-    pub sector: i16,
-}
-
-named!(sidedefs_lump(&[u8]) -> Vec<DoomSide>, terminated!(many0!(do_parse!(
-    x_offset: le_i16 >>
-    y_offset: le_i16 >>
-    upper_texture: apply!(fixed_length_ascii, 8) >>
-    lower_texture: apply!(fixed_length_ascii, 8) >>
-    middle_texture: apply!(fixed_length_ascii, 8) >>
-    sector: le_i16 >>
-    (DoomSide{ x_offset: x_offset, y_offset: y_offset, upper_texture: upper_texture, lower_texture: lower_texture, middle_texture: middle_texture, sector: sector })
-)), eof!()));
-
-pub struct DoomThing {
-    pub x: i16,
-    pub y: i16,
-    // TODO what is this
-    pub angle: i16,
-    pub doomednum: i16,
-    // NOTE: boom added two flags, and mbf one more, so this is a decent signal for targeting those (but not 100%)
-    pub flags: u16,
-}
-
-// TODO totally different in hexen
-named!(doom_things_lump(&[u8]) -> Vec<DoomThing>, terminated!(many0!(do_parse!(
-    x: le_i16 >>
-    y: le_i16 >>
-    angle: le_i16 >>
-    doomednum: le_i16 >>
-    flags: le_u16 >>
-    (DoomThing{ x: x, y: y, angle: angle, doomednum: doomednum, flags: flags })
-)), eof!()));
 
 
 pub struct BareSector<'a> {
@@ -590,21 +724,34 @@ named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(
 )), eof!()));
 
 
+pub struct BareBinaryMap<'a, L: BareBinaryLine, T: BareBinaryThing> {
+    pub vertices: Vec<BareVertex>,
+    pub sectors: Vec<BareSector<'a>>,
+    pub sides: Vec<BareSide<'a>>,
+    pub lines: Vec<L>,
+    pub things: Vec<T>,
+}
+
 /// The result of parsing a Doom-format map definition.  The contained
 /// structures have not been changed in any way.  Everything is public, and
 /// nothing is preventing you from meddling with the contained data in a way
 /// that might make it invalid.
-pub struct BareDoomMap<'a> {
-    pub vertices: Vec<BareVertex>,
-    pub sectors: Vec<BareSector<'a>>,
-    pub sides: Vec<DoomSide<'a>>,
-    pub lines: Vec<DoomLine>,
-    pub things: Vec<DoomThing>,
+pub type BareDoomMap<'a> = BareBinaryMap<'a, BareDoomLine, BareDoomThing>;
+
+/// The result of parsing a Hexen-format map definition.  The contained
+/// structures have not been changed in any way.  Everything is public, and
+/// nothing is preventing you from meddling with the contained data in a way
+/// that might make it invalid.
+pub type BareHexenMap<'a> = BareBinaryMap<'a, BareHexenLine, BareHexenThing>;
+
+pub enum BareMap<'a> {
+    Doom(BareDoomMap<'a>),
+    Hexen(BareHexenMap<'a>),
 }
 
 
 // TODO much more error handling wow lol
-pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareDoomMap<'a>> {
+pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareMap<'a>> {
     let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
     let buf = archive.entry_slice(vertexes_index);
     let vertices = try!( nom_to_result("VERTEXES lump", vertexes_lump(buf)) );
@@ -613,25 +760,44 @@ pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Res
     let buf = archive.entry_slice(sectors_index);
     let sectors = try!( nom_to_result("SECTORS lump", sectors_lump(buf)) );
 
-    let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
-    let buf = archive.entry_slice(linedefs_index);
-    let lines = try!( nom_to_result("LINEDEFS lump", doom_linedefs_lump(buf)) );
-
     let sidedefs_index = try!( range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS")) );
     let buf = archive.entry_slice(sidedefs_index);
     let sides = try!( nom_to_result("SIDEDEFS lump", sidedefs_lump(buf)) );
 
-    let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
-    let buf = archive.entry_slice(things_index);
-    let things = try!( nom_to_result("THINGS lump", doom_things_lump(buf)) );
+    if range.format == MapFormat::Doom {
+        let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
+        let buf = archive.entry_slice(linedefs_index);
+        let lines = try!( nom_to_result("LINEDEFS lump", doom_linedefs_lump(buf)) );
 
-    return Ok(BareDoomMap{
-        vertices: vertices,
-        sectors: sectors,
-        sides: sides,
-        lines: lines,
-        things: things,
-    });
+        let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
+        let buf = archive.entry_slice(things_index);
+        let things = try!( nom_to_result("THINGS lump", doom_things_lump(buf)) );
+
+        return Ok(BareMap::Doom(BareDoomMap{
+            vertices: vertices,
+            sectors: sectors,
+            sides: sides,
+            lines: lines,
+            things: things,
+        }));
+    }
+    else {
+        let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
+        let buf = archive.entry_slice(linedefs_index);
+        let lines = try!( nom_to_result("LINEDEFS lump", hexen_linedefs_lump(buf)) );
+
+        let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
+        let buf = archive.entry_slice(things_index);
+        let things = try!( nom_to_result("THINGS lump", hexen_things_lump(buf)) );
+
+        return Ok(BareMap::Hexen(BareHexenMap{
+            vertices: vertices,
+            sectors: sectors,
+            sides: sides,
+            lines: lines,
+            things: things,
+        }));
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -641,12 +807,13 @@ pub enum Facing {
 }
 
 use std::collections::HashMap;
-impl<'a> BareDoomMap<'a> {
+// TODO ok so this is mildly clever but won't work once we get to UDMF champ
+impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
     // TODO this is a horrible fucking mess.  but it's a /contained/ horrible fucking mess, so.
     pub fn sector_to_polygons(&'a self, s: usize) -> Vec<Vec<&'a BareVertex>> {
-        struct Edge<'a> {
-            line: &'a DoomLine,
-            side: &'a DoomSide<'a>,
+        struct Edge<'a, L: 'a> {
+            line: &'a L,
+            side: &'a BareSide<'a>,
             facing: Facing,
             v0: &'a BareVertex,
             v1: &'a BareVertex,
@@ -671,27 +838,27 @@ impl<'a> BareDoomMap<'a> {
         let mut vertices_to_edges = HashMap::new();
         // TODO linear scan
         for line in self.lines.iter() {
-            // TODO an iterator over all sides would be nice i suppose
-            for &(sidedef, facing) in [(line.front_sidedef, Facing::Front), (line.back_sidedef, Facing::Back)].iter() {
-                if sidedef == -1 {
+            let (frontid, backid) = line.side_indices();
+            for &(facing, sideid) in [(Facing::Front, frontid), (Facing::Back, backid)].iter() {
+                if sideid == -1 {
                     continue;
                 }
-
                 // TODO this and the vertices lookups might be bogus and crash...
-                let side = &self.sides[sidedef as usize];
+                let side = &self.sides[sideid as usize];
                 if side.sector as usize == s {
+                    let (v0, v1) = line.vertex_indices();
                     let edge = Edge{
                         line: line,
                         side: side,
                         facing: facing,
                         // TODO should these be swapped depending on the line facing?
-                        v0: &self.vertices[line.v0 as usize],
-                        v1: &self.vertices[line.v1 as usize],
+                        v0: &self.vertices[v0 as usize],
+                        v1: &self.vertices[v1 as usize],
                         done: false,
                     };
                     edges.push(edge);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[line.v0 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[line.v1 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[v0 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[v1 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
                 }
             }
         }

@@ -31,7 +31,10 @@ fn run() -> Result<()> {
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {
         let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
-        write_bare_map_as_svg(&bare_map);
+        match bare_map {
+            idchoppers::BareMap::Doom(map) => write_bare_map_as_svg(&map),
+            idchoppers::BareMap::Hexen(map) => write_bare_map_as_svg(&map),
+        }
         println!("wrote a map");
         break;
     }
@@ -39,7 +42,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
+fn write_bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing>(map: &idchoppers::BareBinaryMap<L, T>) {
     let mut group = Group::new();
     let mut minx;
     let mut miny;
@@ -48,8 +51,9 @@ fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
         miny = vertex.y;
     }
     else if let Some(thing) = map.things.first() {
-        minx = thing.x;
-        miny = thing.y;
+        let (x, y) = thing.coords();
+        minx = x;
+        miny = y;
     }
     else {
         minx = 0;
@@ -76,19 +80,21 @@ fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
     let mut classes = Vec::new();
     for line in map.lines.iter() {
         classes.clear();
-        let v0 = &map.vertices[line.v0 as usize];
-        let v1 = &map.vertices[line.v1 as usize];
+        let (v0i, v1i) = line.vertex_indices();
+        let v0 = &map.vertices[v0i as usize];
+        let v1 = &map.vertices[v1i as usize];
         classes.push("line");
-        if line.front_sidedef == -1 && line.back_sidedef == -1 {
+        let (frontid, backid) = line.side_indices();
+        if frontid == -1 && backid == -1 {
             classes.push("zero-sided");
         }
-        else if line.front_sidedef == -1 || line.back_sidedef == -1 {
+        else if frontid == -1 || backid == -1 {
             classes.push("one-sided");
         }
         else {
             classes.push("two-sided");
         }
-        if line.special != 0 {
+        if line.has_special() {
             classes.push("has-special");
         }
 
@@ -103,20 +109,21 @@ fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
     }
 
     for thing in map.things.iter() {
-        if thing.x < minx {
-            minx = thing.x;
+        let (x, y) = thing.coords();
+        if x < minx {
+            minx = x;
         }
-        if thing.x > maxx {
-            maxx = thing.x;
+        if x > maxx {
+            maxx = x;
         }
-        if thing.y < miny {
-            miny = thing.y;
+        if y < miny {
+            miny = y;
         }
-        if thing.y > maxy {
-            maxy = thing.y;
+        if y > maxy {
+            maxy = y;
         }
         let (color, radius);
-        if let Some(thing_type) = idchoppers::universe::lookup_thing_type(thing.doomednum as u32) {
+        if let Some(thing_type) = idchoppers::universe::lookup_thing_type(thing.doomednum() as u32) {
             color = match thing_type.category {
                 idchoppers::universe::ThingCategory::PlayerStart(_) => "green",
                 idchoppers::universe::ThingCategory::Monster => "red",
@@ -129,8 +136,8 @@ fn write_bare_map_as_svg(map: &idchoppers::BareDoomMap) {
         }
         group.append(
             Rectangle::new()
-            .set("x", thing.x - (radius as i16))
-            .set("y", thing.y - (radius as i16))
+            .set("x", x - (radius as i16))
+            .set("y", y - (radius as i16))
             .set("width", radius * 2)
             .set("height", radius * 2)
             .set("fill", color));

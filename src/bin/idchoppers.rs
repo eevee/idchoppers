@@ -1,5 +1,8 @@
+use std::fs::File;
 use std::io::{self, Read, Write};
 
+extern crate byteorder;
+use byteorder::{LittleEndian, WriteBytesExt};
 extern crate idchoppers;
 use idchoppers::errors::Result;
 extern crate svg;
@@ -19,6 +22,7 @@ fn main() {
             write!(&mut stderr, "error: ");
             stderr.set_color(&ColorSpec::new());
             writeln!(&mut stderr, "{}", err);
+            println!("{:?}", err.backtrace());
         }
     }
 }
@@ -48,6 +52,95 @@ fn run() -> Result<()> {
         println!("{}", entry.name);
     }
     */
+
+    let mut buffer = Vec::new();
+    let mut directory = Vec::new();
+    let mut filepos: usize = 0;
+    for map_range in wad.iter_maps() {
+        let mut bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        if let idchoppers::BareMap::Doom(mut map) = bare_map {
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: 0,
+                name: wad.directory[map_range.marker_index].name,
+            });
+
+            // Things
+            for thing in map.things.iter_mut() {
+                thing.y = -thing.y;
+                thing.angle = -thing.angle;
+                thing.write_to(&mut buffer);
+            }
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: (buffer.len() - filepos) as u32,
+                name: "THINGS",
+            });
+            filepos = buffer.len();
+
+            // Lines
+            for line in map.lines.iter_mut() {
+                std::mem::swap(&mut line.v0, &mut line.v1);
+                line.write_to(&mut buffer);
+            }
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: (buffer.len() - filepos) as u32,
+                name: "LINEDEFS",
+            });
+            filepos = buffer.len();
+
+            // Sides
+            for side in map.sides.iter_mut() {
+                side.write_to(&mut buffer);
+            }
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: (buffer.len() - filepos) as u32,
+                name: "SIDEDEFS",
+            });
+            filepos = buffer.len();
+
+            // Vertices
+            for vertex in map.vertices.iter_mut() {
+                vertex.y = -vertex.y;
+                vertex.write_to(&mut buffer);
+            }
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: (buffer.len() - filepos) as u32,
+                name: "VERTEXES",
+            });
+            filepos = buffer.len();
+
+            // Sectors
+            for sector in map.sectors.iter_mut() {
+                sector.write_to(&mut buffer);
+            }
+            directory.push(idchoppers::BareWADDirectoryEntry{
+                filepos: (filepos + 12) as u32,
+                size: (buffer.len() - filepos) as u32,
+                name: "SECTORS",
+            });
+            filepos = buffer.len();
+
+            println!("{} - Doom format map", map_range.name);
+        }
+    }
+    let mut f = try!(File::create("flipped.wad"));
+    try!(f.write("PWAD".as_bytes()));
+    try!(f.write_u32::<LittleEndian>(directory.len() as u32));
+    try!(f.write_u32::<LittleEndian>((12 + buffer.len()) as u32));
+    try!(f.write_all(&buffer[..]));
+    for entry in directory.iter() {
+        println!("{:?}", entry);
+        try!(f.write_u32::<LittleEndian>(entry.filepos));
+        try!(f.write_u32::<LittleEndian>(entry.size));
+        try!(f.write(entry.name.as_bytes()));
+        for _ in entry.name.len() .. 8 {
+            try!(f.write(&[0]));
+        }
+    }
 
     Ok(())
 }

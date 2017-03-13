@@ -1,6 +1,10 @@
 use nom;
 
 error_chain! {
+    foreign_links {
+        Io(::std::io::Error);
+    }
+
     errors {
         ParseError {
             description("nonspecific parse error")

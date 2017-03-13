@@ -1,13 +1,16 @@
+extern crate byteorder;
 #[macro_use]
 extern crate nom;
 #[macro_use]
 extern crate error_chain;
 
 use std::borrow::Cow;
+use std::io::Write;
 use std::str::FromStr;
 use std::str;
 use std::u8;
 
+use byteorder::{LittleEndian, WriteBytesExt};
 use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32, le_u8};
 
 pub mod errors;
@@ -288,6 +291,7 @@ named!(wad_header(&[u8]) -> BareWADHeader, do_parse!(
 ));
 
 
+#[derive(Debug)]
 pub struct BareWADDirectoryEntry<'a> {
     pub filepos: u32,
     pub size: u32,
@@ -325,12 +329,12 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     }
 }
 
-named!(wad_entry(&[u8]) -> BareWADDirectoryEntry, do_parse!(
+named!(wad_entry(&[u8]) -> BareWADDirectoryEntry, dbg_dmp!(do_parse!(
     filepos: le_u32 >>
     size: le_u32 >>
     name: apply!(fixed_length_ascii, 8) >>
     (BareWADDirectoryEntry{ filepos: filepos, size: size, name: name })
-));
+)));
 
 fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8], Vec<BareWADDirectoryEntry<'a>>> {
     let lumpct = header.numlumps as usize;
@@ -563,6 +567,17 @@ pub struct BareDoomThing {
     pub flags: u16,
 }
 
+impl BareDoomThing {
+    pub fn write_to(&self, writer: &mut Write) -> Result<()> {
+        try!(writer.write_i16::<LittleEndian>(self.x));
+        try!(writer.write_i16::<LittleEndian>(self.y));
+        try!(writer.write_i16::<LittleEndian>(self.angle));
+        try!(writer.write_i16::<LittleEndian>(self.doomednum));
+        try!(writer.write_u16::<LittleEndian>(self.flags));
+        Ok(())
+    }
+}
+
 // TODO totally different in hexen
 named!(doom_things_lump(&[u8]) -> Vec<BareDoomThing>, terminated!(many0!(do_parse!(
     x: le_i16 >>
@@ -647,6 +662,19 @@ pub struct BareDoomLine {
     pub back_sidedef: i16,
 }
 
+impl BareDoomLine {
+    pub fn write_to(&self, writer: &mut Write) -> Result<()> {
+        try!(writer.write_i16::<LittleEndian>(self.v0));
+        try!(writer.write_i16::<LittleEndian>(self.v1));
+        try!(writer.write_i16::<LittleEndian>(self.flags));
+        try!(writer.write_i16::<LittleEndian>(self.special));
+        try!(writer.write_i16::<LittleEndian>(self.sector_tag));
+        try!(writer.write_i16::<LittleEndian>(self.front_sidedef));
+        try!(writer.write_i16::<LittleEndian>(self.back_sidedef));
+        Ok(())
+    }
+}
+
 named!(doom_linedefs_lump(&[u8]) -> Vec<BareDoomLine>, terminated!(many0!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
@@ -726,6 +754,27 @@ pub struct BareSide<'a> {
     pub sector: i16,
 }
 
+impl<'a> BareSide<'a> {
+    pub fn write_to(&self, writer: &mut Write) -> Result<()> {
+        try!(writer.write_i16::<LittleEndian>(self.x_offset));
+        try!(writer.write_i16::<LittleEndian>(self.y_offset));
+        try!(writer.write(self.upper_texture.as_bytes()));
+        for _ in self.upper_texture.len() .. 8 {
+            try!(writer.write(&[0]));
+        }
+        try!(writer.write(self.lower_texture.as_bytes()));
+        for _ in self.lower_texture.len() .. 8 {
+            try!(writer.write(&[0]));
+        }
+        try!(writer.write(self.middle_texture.as_bytes()));
+        for _ in self.middle_texture.len() .. 8 {
+            try!(writer.write(&[0]));
+        }
+        try!(writer.write_i16::<LittleEndian>(self.sector));
+        Ok(())
+    }
+}
+
 named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, terminated!(many0!(do_parse!(
     x_offset: le_i16 >>
     y_offset: le_i16 >>
@@ -741,6 +790,14 @@ named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, terminated!(many0!(do_parse!(
 pub struct BareVertex {
     pub x: i16,
     pub y: i16,
+}
+
+impl BareVertex {
+    pub fn write_to(&self, writer: &mut Write) -> Result<()> {
+        try!(writer.write_i16::<LittleEndian>(self.x));
+        try!(writer.write_i16::<LittleEndian>(self.y));
+        Ok(())
+    }
 }
 
 named!(vertexes_lump<&[u8], Vec<BareVertex>>, terminated!(many0!(do_parse!(
@@ -759,6 +816,25 @@ pub struct BareSector<'a> {
     pub light: i16,  // XXX what??  light can only go up to 255!
     pub sector_type: i16,  // TODO check if these are actually signed or what
     pub sector_tag: i16,
+}
+
+impl<'a> BareSector<'a> {
+    pub fn write_to(&self, writer: &mut Write) -> Result<()> {
+        try!(writer.write_i16::<LittleEndian>(self.floor_height));
+        try!(writer.write_i16::<LittleEndian>(self.ceiling_height));
+        try!(writer.write(self.floor_texture.as_bytes()));
+        for _ in self.floor_texture.len() .. 8 {
+            try!(writer.write(&[0]));
+        }
+        try!(writer.write(self.ceiling_texture.as_bytes()));
+        for _ in self.ceiling_texture.len() .. 8 {
+            try!(writer.write(&[0]));
+        }
+        try!(writer.write_i16::<LittleEndian>(self.light));
+        try!(writer.write_i16::<LittleEndian>(self.sector_type));
+        try!(writer.write_i16::<LittleEndian>(self.sector_tag));
+        Ok(())
+    }
 }
 
 named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(

@@ -66,7 +66,7 @@ fn nom_to_result<I, O>(whence: &'static str, result: IResult<I, O>) -> Result<O>
         IResult::Done(_, value) => {
             return Ok(value);
         }
-        IResult::Incomplete(needed) => {
+        IResult::Incomplete(_) => {
             bail!(ErrorKind::TruncatedData(whence));
         }
         IResult::Error(err) => {
@@ -123,6 +123,7 @@ trait WAD {}
 
 /// High-level interface to a WAD archive.  Does its best to prevent you from producing an invalid
 /// WAD.  This is probably what you want.
+#[allow(dead_code)]
 pub struct WADArchive<'a> {
     // TODO it would be nice if we could take ownership of the slice somehow, but i don't know how
     // to do that really.  i also don't know how to tell rust that the entry slices are owned by
@@ -255,7 +256,7 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
                 Ok(string) => {
                     return IResult::Done(leftovers, string.trim_right_matches('\0'));
                 }
-                Err(error) => {
+                Err(_) => {
                     // TODO preserve the utf8 error...  somehow.
                     return IResult::Error(nom::Err::Code(nom::ErrorKind::Custom(0)));
                 }
@@ -338,6 +339,7 @@ const MAP_LUMP_ORDER: [(&'static str, bool); 11] = [
     ("BEHAVIOR", false),
 ];
 
+#[allow(dead_code)]
 pub struct WADMapIterator<'a> {
     archive: &'a BareWAD<'a>,
     entry_iter: std::iter::Enumerate<std::slice::Iter<'a, BareWADDirectoryEntry<'a>>>,

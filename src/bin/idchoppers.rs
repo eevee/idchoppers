@@ -1,11 +1,11 @@
 use std::io::{self, Read, Write};
 
 extern crate idchoppers;
-use idchoppers::errors::Result;
+use idchoppers::errors::{Error, Result};
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
-use svg::node::element::{Circle, Group, Line, Path, Rectangle, Style};
+use svg::node::element::{Group, Line, Path, Rectangle, Style};
 use svg::node::element::path::Data;
 extern crate termcolor;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
@@ -14,18 +14,23 @@ fn main() {
     match run() {
         Ok(()) => {}
         Err(err) => {
-            let mut stderr = StandardStream::stderr(ColorChoice::Auto);
-            stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true));
-            write!(&mut stderr, "error: ");
-            stderr.set_color(&ColorSpec::new());
-            writeln!(&mut stderr, "{}", err);
+            drop(write_err(err));
         }
     }
 }
 
+fn write_err(err: Error) -> Result<()> {
+    let mut stderr = StandardStream::stderr(ColorChoice::Auto);
+    stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
+    write!(&mut stderr, "error: ")?;
+    stderr.set_color(&ColorSpec::new())?;
+    writeln!(&mut stderr, "{}", err)?;
+    Ok(())
+}
+
 fn run() -> Result<()> {
     let mut buf = Vec::new();
-    io::stdin().read_to_end(&mut buf);
+    io::stdin().read_to_end(&mut buf)?;
 
     let wad = try!(idchoppers::parse_wad(buf.as_slice()));
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);

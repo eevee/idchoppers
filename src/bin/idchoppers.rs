@@ -28,6 +28,9 @@ fn write_err(err: Error) -> Result<()> {
     write!(&mut stderr, "error: ")?;
     stderr.set_color(&ColorSpec::new())?;
     writeln!(&mut stderr, "{}", err)?;
+    if let Some(backtrace) = err.backtrace() {
+        writeln!(&mut stderr, "{:?}", backtrace)?;
+    }
     Ok(())
 }
 

@@ -27,7 +27,7 @@ fn write_err(err: Error) -> Result<()> {
     stderr.set_color(ColorSpec::new().set_fg(Some(Color::Red)).set_bold(true))?;
     write!(&mut stderr, "error: ")?;
     stderr.set_color(&ColorSpec::new())?;
-    writeln!(&mut stderr, "{}", err.backtrace())?;
+    writeln!(&mut stderr, "{}", err)?;
     Ok(())
 }
 

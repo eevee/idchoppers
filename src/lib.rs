@@ -11,7 +11,7 @@ use std::str;
 use std::u8;
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use nom::{IResult, Needed, digit, le_i16, le_u16, le_u32, le_u8};
+use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 
 pub mod errors;
 use errors::{ErrorKind, Result};
@@ -1063,6 +1063,48 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
 
         return outlines;
     }
+}
+
+
+pub struct TEXTURExEntry<'a> {
+    pub name: &'a str,
+    pub width: i16,
+    pub height: i16,
+}
+
+named!(texturex_lump_header(&[u8]) -> Vec<i32>, do_parse!(
+    numtextures: le_i32 >>
+    offsets: many_m_n!(numtextures as usize, numtextures as usize, le_i32) >>
+    (offsets)
+));
+
+named!(texturex_lump_entry(&[u8]) -> TEXTURExEntry, do_parse!(
+    name: apply!(fixed_length_ascii, 8) >>
+    le_i32 >>  // "masked", unused
+    // TODO these should be positive
+    width: le_i16 >>
+    height: le_i16 >>
+    le_i32 >>  // "columndirectory", unused
+    patchcount: le_i16 >>
+    // TODO patches
+    (TEXTURExEntry{
+        name: name,
+        width: width,
+        height: height,
+    })
+));
+
+pub fn parse_texturex_names<'a>(buf: &'a [u8]) -> Result<Vec<TEXTURExEntry<'a>>> {
+    let offsets = try!(nom_to_result("TEXTUREx header", texturex_lump_header(buf)));
+    let mut ret = Vec::with_capacity(offsets.len());
+    for (i, &offset) in offsets.iter().enumerate() {
+        if offset < 0 {
+            bail!(ErrorKind::NegativeOffset("TEXTUREx", i, offset as isize));
+        }
+        // TODO check for too large offset too, instead of Incomplete
+        ret.push(try!(nom_to_result("TEXTUREx", texturex_lump_entry(&buf[(offset as usize)..]))));
+    }
+    return Ok(ret);
 }
 
 

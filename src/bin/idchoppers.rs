@@ -51,12 +51,24 @@ fn run() -> Result<()> {
     }
 
     // FIXME this also catches F1_START etc, dammit
-    /*
     for entry in wad.iter_entries_between("F_START", "F_END") {
         println!("{}", entry.name);
     }
-    */
 
+    let texture_entries;
+    if let Some(texbuf) = wad.first_entry("TEXTURE1") {
+        texture_entries = try!(idchoppers::parse_texturex_names(texbuf));
+    }
+    else if let Some(texbuf) = wad.first_entry("TEXTURE2") {
+        texture_entries = try!(idchoppers::parse_texturex_names(texbuf));
+    }
+    else {
+        texture_entries = vec![];
+    }
+    for entry in texture_entries.iter() {
+        println!("{}", entry.name);
+    }
+    return Ok(());
     let mut buffer = Vec::new();
     let mut directory = Vec::new();
     let mut filepos: usize = 0;

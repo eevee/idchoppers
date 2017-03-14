@@ -57,6 +57,7 @@ fn run() -> Result<()> {
     for entry in wad.iter_entries_between("F_START", "F_END") {
         println!("{}", entry.name);
     }
+    println!("---");
 
     let texture_entries;
     if let Some(texbuf) = wad.first_entry("TEXTURE1") {

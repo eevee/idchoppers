@@ -14,7 +14,7 @@ use byteorder::{LittleEndian, WriteBytesExt};
 use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 
 pub mod errors;
-use errors::{ErrorKind, Result};
+use errors::{ErrorKind, Result, nom_to_result};
 pub mod universe;
 
 
@@ -70,27 +70,6 @@ pub enum MapFormat {
     Doom,
     Hexen,
     UDMF,
-}
-
-
-fn nom_to_result<I, O>(whence: &'static str, result: IResult<I, O>) -> Result<O> {
-    match result {
-        IResult::Done(_, value) => {
-            return Ok(value);
-        }
-        IResult::Incomplete(_) => {
-            bail!(ErrorKind::TruncatedData(whence));
-        }
-        IResult::Error(err) => {
-            let error_kind = match err {
-                nom::Err::Code(ref k) | nom::Err::Node(ref k, _) | nom::Err::Position(ref k, _) | nom::Err::NodePosition(ref k, _, _) => k
-            };
-            match *error_kind {
-                nom::ErrorKind::Custom(1) => bail!(ErrorKind::InvalidMagic),
-                _ => bail!(ErrorKind::ParseError),
-            }
-        }
-    }
 }
 
 
@@ -309,25 +288,29 @@ impl<'a> BareWADDirectoryEntry<'a> {
 }
 
 fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
-    match take!(input, len) {
-        IResult::Done(leftovers, bytes) => {
-            match std::str::from_utf8(bytes) {
-                Ok(string) => {
-                    return IResult::Done(leftovers, string.trim_right_matches('\0'));
-                }
-                Err(_) => {
-                    // TODO preserve the utf8 error...  somehow.
-                    return IResult::Error(nom::Err::Code(nom::ErrorKind::Custom(0)));
-                }
+    let mut input = input;
+    if input.len() < len {
+        return IResult::Incomplete(Needed::Size(len));
+    }
+
+    for i in 0..len {
+        match input[i] {
+            0 => {
+                // This is the end
+                let s = unsafe { str::from_utf8_unchecked(&input[..i]) };
+                return IResult::Done(&input[len..], s);
+            }
+            32 ... 128 => {
+                // OK
+            }
+            _ => {
+                // Totally bogus character
+                return IResult::Error(nom::Err::Code(nom::ErrorKind::Custom(0)));
             }
         }
-        IResult::Incomplete(needed) => {
-            return IResult::Incomplete(needed);
-        }
-        IResult::Error(error) => {
-            return IResult::Error(error);
-        }
     }
+
+    return IResult::Done(&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) });
 }
 
 named!(wad_entry(&[u8]) -> BareWADDirectoryEntry, dbg_dmp!(do_parse!(
@@ -374,8 +357,9 @@ impl<'a> BareWAD<'a> {
 // FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
 pub fn parse_wad(buf: &[u8]) -> Result<BareWAD> {
     // FIXME ambiguous whether the error was from parsing the header or the entries
-    let header = try!(nom_to_result("wad header", wad_header(buf)));
-    let entries = try!(nom_to_result("wad index", wad_directory(buf, &header)));
+    let header = try!(nom_to_result("wad header", buf, wad_header(buf)));
+    // TODO buf is not actually the right place here
+    let entries = try!(nom_to_result("wad index", buf, wad_directory(buf, &header)));
     return Ok(BareWAD{ buffer: buf, header: header, directory: entries });
 }
 
@@ -777,15 +761,44 @@ impl<'a> BareSide<'a> {
     }
 }
 
-named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, terminated!(many0!(do_parse!(
+// FIXME using many0! followed by eof! means that if the parse fails, many0! thinks that's a
+// success, stops, and then hits the eof! and fails, which loses the original error and is really
+// confusing
+// TODO file some tickets on nom:
+// - docs for call! are actually for apply!
+// - many_till! with eof! gives a bizarre error about being unable to infer a type for E
+// - error management guide seems to be pre-2.0; mentions importing from nom::util, which is
+//   private, and makes no mention of verbose vs simple errors at all
+//   - also, even with verbose errors, error handling kinda sucks?  i'm not even sure why this is
+//     an enum when it gives me completely useless alternations, some of which (ManyTill) are
+//     thrown in multiple places
+//   - seems impossible to use a different error type due to rust's not very good inference rules
+//   - many_till throws away the underlying error.
+macro_rules! typed_eof (
+    ($i:expr,) => (
+        {
+            let res: IResult<_, _> = eof!($i,);
+            res
+        }
+    );
+);
+
+named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, map!(many_till!(do_parse!(
     x_offset: le_i16 >>
     y_offset: le_i16 >>
     upper_texture: apply!(fixed_length_ascii, 8) >>
     lower_texture: apply!(fixed_length_ascii, 8) >>
     middle_texture: apply!(fixed_length_ascii, 8) >>
     sector: le_i16 >>
-    (BareSide{ x_offset: x_offset, y_offset: y_offset, upper_texture: upper_texture, lower_texture: lower_texture, middle_texture: middle_texture, sector: sector })
-)), eof!()));
+    (BareSide{
+        x_offset: x_offset,
+        y_offset: y_offset,
+        upper_texture: upper_texture,
+        lower_texture: lower_texture,
+        middle_texture: middle_texture,
+        sector: sector
+    })
+), typed_eof!()), |(r, _)| r));
 
 // FIXME: vertices are i16 for vanilla, 15/16 fixed for ps/n64, effectively infinite but really f32 for udmf
 #[derive(Debug)]
@@ -887,26 +900,27 @@ pub enum BareMap<'a> {
 
 // TODO much more error handling wow lol
 pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareMap<'a>> {
+    // TODO the map being parsed doesn't appear in the returned error...  sigh
     let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
     let buf = archive.entry_slice(vertexes_index);
-    let vertices = try!( nom_to_result("VERTEXES lump", vertexes_lump(buf)) );
+    let vertices = try!( nom_to_result("VERTEXES lump", buf, vertexes_lump(buf)) );
 
     let sectors_index = try!( range.sectors_index.ok_or(ErrorKind::MissingMapLump("SECTORS")) );
     let buf = archive.entry_slice(sectors_index);
-    let sectors = try!( nom_to_result("SECTORS lump", sectors_lump(buf)) );
+    let sectors = try!( nom_to_result("SECTORS lump", buf, sectors_lump(buf)) );
 
     let sidedefs_index = try!( range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS")) );
     let buf = archive.entry_slice(sidedefs_index);
-    let sides = try!( nom_to_result("SIDEDEFS lump", sidedefs_lump(buf)) );
+    let sides = try!( nom_to_result("SIDEDEFS lump", buf, sidedefs_lump(buf)) );
 
     if range.format == MapFormat::Doom {
         let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
         let buf = archive.entry_slice(linedefs_index);
-        let lines = try!( nom_to_result("LINEDEFS lump", doom_linedefs_lump(buf)) );
+        let lines = try!( nom_to_result("LINEDEFS lump", buf, doom_linedefs_lump(buf)) );
 
         let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
         let buf = archive.entry_slice(things_index);
-        let things = try!( nom_to_result("THINGS lump", doom_things_lump(buf)) );
+        let things = try!( nom_to_result("THINGS lump", buf, doom_things_lump(buf)) );
 
         return Ok(BareMap::Doom(BareDoomMap{
             vertices: vertices,
@@ -919,11 +933,11 @@ pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Res
     else {
         let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
         let buf = archive.entry_slice(linedefs_index);
-        let lines = try!( nom_to_result("LINEDEFS lump", hexen_linedefs_lump(buf)) );
+        let lines = try!( nom_to_result("LINEDEFS lump", buf, hexen_linedefs_lump(buf)) );
 
         let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
         let buf = archive.entry_slice(things_index);
-        let things = try!( nom_to_result("THINGS lump", hexen_things_lump(buf)) );
+        let things = try!( nom_to_result("THINGS lump", buf, hexen_things_lump(buf)) );
 
         return Ok(BareMap::Hexen(BareHexenMap{
             vertices: vertices,
@@ -1095,14 +1109,14 @@ named!(texturex_lump_entry(&[u8]) -> TEXTURExEntry, do_parse!(
 ));
 
 pub fn parse_texturex_names<'a>(buf: &'a [u8]) -> Result<Vec<TEXTURExEntry<'a>>> {
-    let offsets = try!(nom_to_result("TEXTUREx header", texturex_lump_header(buf)));
+    let offsets = try!(nom_to_result("TEXTUREx header", buf, texturex_lump_header(buf)));
     let mut ret = Vec::with_capacity(offsets.len());
     for (i, &offset) in offsets.iter().enumerate() {
         if offset < 0 {
             bail!(ErrorKind::NegativeOffset("TEXTUREx", i, offset as isize));
         }
         // TODO check for too large offset too, instead of Incomplete
-        ret.push(try!(nom_to_result("TEXTUREx", texturex_lump_entry(&buf[(offset as usize)..]))));
+        ret.push(try!(nom_to_result("TEXTUREx", buf, texturex_lump_entry(&buf[(offset as usize)..]))));
     }
     return Ok(ret);
 }

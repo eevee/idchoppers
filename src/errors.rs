@@ -1,8 +1,8 @@
-use nom;
+use std::io;
 
 error_chain! {
     foreign_links {
-        Io(::std::io::Error);
+        Io(io::Error);
     }
 
     errors {

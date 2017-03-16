@@ -46,11 +46,14 @@ fn run() -> Result<()> {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
                 println!("{} - Doom format map", map_range.name);
+                write_bare_map_as_svg(&map);
             }
             idchoppers::BareMap::Hexen(map) => {
                 println!("{} - Hexen format map", map_range.name);
+                write_bare_map_as_svg(&map);
             }
         }
+        return Ok(());
     }
 
     // FIXME this also catches F1_START etc, dammit
@@ -248,8 +251,10 @@ fn write_bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinar
         let (color, radius);
         if let Some(thing_type) = idchoppers::universe::lookup_thing_type(thing.doomednum() as u32) {
             color = match thing_type.category {
-                idchoppers::universe::ThingCategory::PlayerStart(_) => "green",
+                idchoppers::universe::ThingCategory::PlayerStart => "green",
                 idchoppers::universe::ThingCategory::Monster => "red",
+                idchoppers::universe::ThingCategory::Miscellaneous => "gray",
+                _ => "magenta",
             };
             radius = thing_type.radius;
         }

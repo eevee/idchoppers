@@ -9,54 +9,60 @@ pub struct Universe {
 
 #[derive(Copy, Clone, Debug)]
 pub enum ThingCategory {
-    PlayerStart(u8),
+    // TODO player starts aren't really actors, or something, i think??
+    PlayerStart,
     Monster,
+    // TODO these are a hierarchy of pickups, really, right?  I guess?
+    // TODO should link ammo to its weapon...  hm, maybe i really do want to just parse zdoom's decorate
+    Ammo,
+    Weapon,
+    HealthArmor,
+    Powerup,
+    Key,
+    // TODO another thing that could be a hierarchy
+    Decoration,
+    Miscellaneous,
 }
 
-pub struct ThingType {
-    pub doomednum: u32,
+#[derive(Debug)]
+pub struct ActorType {
+    pub doomednum: Option<u32>,
+    //spawnstate: S_PLAY,
+    pub spawnhealth: u32,
+    //seestate: S_PLAY_RUN1,
+    pub seesound: Option<&'static str>,
+    pub reactiontime: u32,
+    pub attacksound: Option<&'static str>,
+    //painstate: S_PLAY_PAIN,
+    pub painchance: u8,
+    pub painsound: Option<&'static str>,
+    //meleestate: S_NULL,
+    //missilestate: S_PLAY_ATK1,
+    //deathstate: S_PLAY_DIE1,
+    //xdeathstate: S_PLAY_XDIE1,
+    pub deathsound: Option<&'static str>,
+    pub speed: u32,
     pub radius: u32,
     pub height: u32,
+    pub mass: u32,
+    pub damage: u32,
+    pub activesound: Option<&'static str>,
+    pub flags: u32,
+    //raisestate: S_NULL,
+    pub flags2: u32,
 
-    pub category: ThingCategory,
     pub zdoom_actor_class: &'static str,
+    pub category: ThingCategory,
 }
 
-pub static TEMP_DOOM_THING_TYPES: [ThingType; 4] = [
-    ThingType{
-        doomednum: 3004,
-        radius: 20,
-        height: 56,
-        category: ThingCategory::Monster,
-        zdoom_actor_class: "ZombieMan",
-    },
-    ThingType{
-        doomednum: 9,
-        radius: 20,
-        height: 56,
-        category: ThingCategory::Monster,
-        zdoom_actor_class: "ShotgunGuy",
-    },
-    ThingType{
-        doomednum: 3001,
-        radius: 20,
-        height: 56,
-        category: ThingCategory::Monster,
-        zdoom_actor_class: "DoomImp",
-    },
-    ThingType{
-        doomednum: 1,
-        radius: 16,
-        height: 56,
-        category: ThingCategory::PlayerStart(1),
-        zdoom_actor_class: "Player1Start",
-    },
-];
 
-pub fn lookup_thing_type(doomednum: u32) -> Option<&'static ThingType> {
-    for thing_type in TEMP_DOOM_THING_TYPES.iter() {
-        if thing_type.doomednum == doomednum {
-            return Some(thing_type);
+use super::vanilladoom::DOOM2_ACTORS;
+pub fn lookup_thing_type(doomednum: u32) -> Option<&'static ActorType> {
+    for thing_type in DOOM2_ACTORS.iter() {
+        if let Some(den) = thing_type.doomednum {
+            if den == doomednum {
+                return Some(thing_type);
+            }
         }
     }
     return None;

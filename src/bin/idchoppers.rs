@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::cmp::Ordering::Equal;
 
 extern crate byteorder;
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -39,22 +40,30 @@ fn run() -> Result<()> {
     io::stdin().read_to_end(&mut buf)?;
 
     let wad = try!(idchoppers::parse_wad(buf.as_slice()));
+    //return identify_wad(&wad);
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {
         let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
+                println!("");
                 println!("{} - Doom format map", map_range.name);
-                write_bare_map_as_svg(&map);
+                let texture_counts = map.count_textures();
+                let mut pairs: Vec<_> = texture_counts.iter().collect();
+                pairs.sort_by(|&(_, &(_, area0)), &(_, &(_, area1))| area0.partial_cmp(&area1).unwrap_or(Equal));
+                for &(name, &(count, area)) in pairs.iter().rev() {
+                    println!("{:8} - {} uses, total area {} ≈ {} tiles", name, count, area, area / (64.0 * 64.0));
+                }
+                //write_bare_map_as_svg(&map);
             }
             idchoppers::BareMap::Hexen(map) => {
                 println!("{} - Hexen format map", map_range.name);
-                write_bare_map_as_svg(&map);
+                //write_bare_map_as_svg(&map);
             }
         }
-        return Ok(());
     }
+    return Ok(());
 
     // FIXME this also catches F1_START etc, dammit
     for entry in wad.iter_entries_between("F_START", "F_END") {
@@ -162,6 +171,32 @@ fn run() -> Result<()> {
         try!(f.write(entry.name.as_bytes()));
         for _ in entry.name.len() .. 8 {
             try!(f.write(&[0]));
+        }
+    }
+
+    Ok(())
+}
+
+fn identify_wad(wad: &idchoppers::BareWAD) -> Result<()> {
+    match wad.header.identification {
+        idchoppers::WADType::IWAD => {
+            println!("IWAD");
+        }
+        idchoppers::WADType::PWAD => {
+            println!("PWAD");
+        }
+    }
+
+    for map_range in wad.iter_maps() {
+        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        match bare_map {
+            // TODO interesting diagnostic: mix of map formats in the same wad
+            idchoppers::BareMap::Doom(map) => {
+                println!("{} - Doom format map", map_range.name);
+            }
+            idchoppers::BareMap::Hexen(map) => {
+                println!("{} - Hexen format map", map_range.name);
+            }
         }
     }
 

@@ -986,7 +986,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
 
         let mut edges = vec![];
         let mut vertices_to_edges = HashMap::new();
-        // TODO linear scan
+        // TODO linear scan -- would make more sense to turn the entire map into polygons in one go
         for line in self.lines.iter() {
             let (frontid, backid) = line.side_indices();
             for &(facing, sideid) in [(Facing::Front, frontid), (Facing::Back, backid)].iter() {
@@ -1077,6 +1077,104 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
         }
 
         return outlines;
+    }
+
+    // TODO of course, this doesn't take later movement of sectors into account, dammit
+    pub fn count_textures(&'a self) -> HashMap<&'a str, (usize, f32)> {
+        let mut counts: HashMap<&'a str, (usize, f32)> = HashMap::new();
+
+        // This block exists only so `add` goes out of scope (and stops borrowing counts) before we
+        // return; I don't know why the compiler cares when `add` clearly doesn't escape
+        {
+            let mut add = |tex: &'a str, area: f32| {
+                // TODO iirc doom64 or something uses a different empty texture name, "?"
+                if tex != "-" {
+                    let entry = counts.entry(tex).or_insert((0, 0.0));
+                    entry.0 += 1;
+                    entry.1 += area;
+                }
+            };
+
+            for line in self.lines.iter() {
+                let (frontid, backid) = line.side_indices();
+                if frontid == -1 && backid == -1 {
+                    // No sides; skip
+                    continue;
+                }
+
+                let (v0i, v1i) = line.vertex_indices();
+                let v0 = &self.vertices[v0i as usize];
+                let v1 = &self.vertices[v1i as usize];
+                let dx = (v1.x - v0.x) as f32;
+                let dy = (v1.y - v0.y) as f32;
+                let length = (dx * dx + dy * dy).sqrt();
+
+                if frontid != -1 && backid != -1 {
+                    // Two-sided line
+                    // TODO checking for the two-sided flag is an interesting map check
+                    // TODO this might be bogus and crash...
+                    // TODO actually that's a good thing to put in a map check
+                    let front_side = &self.sides[frontid as usize];
+                    let back_side = &self.sides[backid as usize];
+                    // TODO sector is an i16??  can it be negative???  indicating no sector?
+                    // (i mean obviously it can be bogus regardless, but can it be deliberately bogus?)
+                    let front_sector = &self.sectors[front_side.sector as usize];
+                    let back_sector = &self.sectors[back_side.sector as usize];
+
+                    let lowest_ceiling;
+                    let ceiling_diff = front_sector.ceiling_height - back_sector.ceiling_height;
+                    if ceiling_diff > 0 {
+                        let front_upper_height = ceiling_diff as f32;
+                        add(front_side.upper_texture, length * front_upper_height);
+                        lowest_ceiling = back_sector.ceiling_height;
+                    }
+                    else {
+                        let back_upper_height = -ceiling_diff as f32;
+                        add(front_side.upper_texture, length * back_upper_height);
+                        lowest_ceiling = front_sector.ceiling_height;
+                    }
+
+                    let highest_floor;
+                    let floor_diff = front_sector.floor_height - back_sector.floor_height;
+                    if floor_diff > 0 {
+                        let back_lower_height = floor_diff as f32;
+                        add(back_side.lower_texture, length * back_lower_height);
+                        highest_floor = back_sector.floor_height;
+                    }
+                    else {
+                        let front_lower_height = -floor_diff as f32;
+                        add(front_side.lower_texture, length * front_lower_height);
+                        highest_floor = front_sector.floor_height;
+                    }
+
+                    let middle_height = (lowest_ceiling - highest_floor) as f32;
+                    // TODO map check for negative height (but this is valid for vavoom-style 3d floors!)
+                    if middle_height > 0.0 {
+                        add(front_side.middle_texture, length * middle_height);
+                        add(back_side.middle_texture, length * middle_height);
+                    }
+                }
+                else if backid == -1 {
+                    // Typical one-sided wall
+                    // TODO map check for no two-sided flag
+                    let front_side = &self.sides[frontid as usize];
+                    let front_sector = &self.sectors[front_side.sector as usize];
+                    let middle_height = (front_sector.ceiling_height - front_sector.floor_height) as f32;
+                    add(front_side.middle_texture, length * middle_height);
+                }
+                else if frontid == -1 {
+                    // Backwards one-sided wall
+                    // TODO map check for no two-sided flag
+                    // TODO maybe a warning for this case too because it's weird
+                    let back_side = &self.sides[backid as usize];
+                    let back_sector = &self.sectors[back_side.sector as usize];
+                    let middle_height = (back_sector.ceiling_height - back_sector.floor_height) as f32;
+                    add(back_side.middle_texture, length * middle_height);
+                }
+            }
+        }
+
+        return counts;
     }
 }
 

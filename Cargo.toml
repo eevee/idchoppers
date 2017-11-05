@@ -9,6 +9,7 @@ error-chain = "0.10.0"
 # TODO uhh how do i separate the binary deps from the library deps?
 termcolor = "^0.3"
 svg = "^0.5"
+clap = "2"
 
 [dependencies.nom]
 version = "^2.1"

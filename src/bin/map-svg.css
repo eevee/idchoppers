@@ -13,6 +13,9 @@
 .line.has-special {
     stroke: #04f;
 }
+.line-dilation {
+    fill: rgba(0%, 0%, 0%, 0.25);
+}
 
 .sector {
     fill: transparent;

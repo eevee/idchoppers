@@ -51,6 +51,9 @@ fn run() -> Result<()> {
             (about: "Render an SVG copy of a map")
             (@arg outfile: +required "Output file")
         )
+        (@subcommand shapeops =>
+            (about: "test shapeops")
+        )
     ).get_matches();
 
     // Read input file
@@ -73,6 +76,7 @@ fn run() -> Result<()> {
     match args.subcommand() {
         ("info", Some(subargs)) /* | (_, None) */ => { do_info(&args, &subargs, &wad)? },
         ("chart", Some(subargs)) => { do_chart(&args, &subargs, &wad)? },
+        ("shapeops", Some(subargs)) => { do_shapeops()? },
         _ => { println!("????"); /* TODO bogus */ },
     }
 
@@ -390,4 +394,27 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
     }
 
     Ok(())
+}
+
+
+
+
+
+use idchoppers::shapeops;
+fn do_shapeops() -> Result<()> {
+    let mut poly1 = idchoppers::shapeops::Polygon::new();
+    for points in [
+        [(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
+        [(16., 16.), (16., 48.), (48., 48.), (48., 16.)],
+    ].iter() {
+        let mut contour = idchoppers::shapeops::Contour::new();
+        contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
+        poly1.contours.push(contour);
+    }
+    poly1.computeHoles();
+    for contour in &poly1.contours {
+        println!("contour cw? {} external? {} holes? {:?}", contour.clockwise(), contour.external(), contour.holes);
+    }
+
+    return Ok(());
 }

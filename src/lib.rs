@@ -1,4 +1,5 @@
 extern crate byteorder;
+extern crate euclid;
 #[macro_use]
 extern crate nom;
 #[macro_use]
@@ -16,7 +17,14 @@ use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 pub mod errors;
 use errors::{ErrorKind, Result, nom_to_result};
 pub mod universe;
+pub mod shapeops;
 mod vanilladoom;
+
+// FIXME so, this whole file is kind of a mess.  i was trying to make the raw binary data available
+// for inspection without needing to parse into a whole map object, and that turns out to be
+// complicated?  designing a wad browsing api is also kinda hard, since...  well.
+// i'm not entirely sure what i should do to remedy all of this.  a Map is fairly heavy-handed, and
+// you can still do plenty of interesting stuff without one.
 
 
 

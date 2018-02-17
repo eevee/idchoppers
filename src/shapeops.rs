@@ -909,13 +909,6 @@ fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
     }
 }
 
-enum SweptIntersection<'a, T: 'a> {
-    Zero,
-    One(&'a SweepSegment<T>, MapPoint),
-    Two(&'a SweepSegment<T>, MapPoint),
-    Three(&'a SweepSegment<T>, MapPoint),
-}
-
 /** @brief Process a posible intersection between the edges associated to the left events le1 and le2 */
 fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2: Option<&'a BoolSweepSegment>) -> (usize, Option<MapPoint>, Option<MapPoint>) {
     let seg1 = match maybe_seg1 {
@@ -995,7 +988,8 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
             else {
                 // The segments overlap in some fashion, but not at their left endpoints.  That
                 // leaves several possible configurations, but all of them ultimately require
-                // the left endpoint of one to split the other
+                // the left endpoint of one to split the other; we'll let the other split happen
+                // when we reach the split point
                 match left_cmp {
                     Ordering::Less =>    return (3, Some(seg2.left.point), None),
                     Ordering::Greater => return (3, None, Some(seg1.left.point)),
@@ -1062,16 +1056,6 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 /*
 fn split_segment(&mut self, original: &BoolSweepSegment, cut: MapPoint) {
 //  std::cout << "YES. INTERSECTION" << std::endl;
-    // The original segment becomes the left side, and the right side is a new segment.
-    // In order to appease Rust mutability rules, we pull some slight shenanigans here by not
-    // requiring &mut segments be passed all the way down here; instead, we grab a mutable
-    // pointer directly from the vector, temporarily, to scope the mutation as small as
-    // possible.
-    // TODO this may become easier if i switch to an arena!
-    let left = original;
-    let index = self.segments.len();
-    let new_data = left.data.clone();
-    let right = left.split_left(cut, index, new_data);
     // FIXME i don't quite understand what this is trying to do and i think it would be better
     // solved by switching the points AND ALSO how is a rounding error possible here?  they
     // should have exactly the same points!
@@ -1107,39 +1091,6 @@ fn find_next_segment<'a>(segments: &Vec<&'a BoolSweepSegment>, current_segment: 
             break;
         }
 
-        /* TODO
-building a contour from (32,48)
-thread 'main' panicked at 'index out of bounds: the len is 0 but the index is 0', /build/rust/src/rustc-1.23.0-src/src/liballoc/vec.rs:1551:10
-stack backtrace:
-   0: std::sys::imp::backtrace::tracing::imp::unwind_backtrace
-   1: std::sys_common::backtrace::print
-   2: std::panicking::default_hook::{{closure}}
-   3: std::panicking::default_hook
-   4: std::panicking::rust_panic_with_hook
-   5: std::panicking::begin_panic
-   6: std::panicking::begin_panic_fmt
-   7: rust_begin_unwind
-   8: core::panicking::panic_fmt
-   9: core::panicking::panic_bounds_check
-  10: <alloc::vec::Vec<T> as core::ops::index::Index<usize>>::index
-             at /build/rust/src/rustc-1.23.0-src/src/liballoc/vec.rs:1551
-  11: idchoppers::shapeops::find_next_segment
-             at src/shapeops.rs:1094
-  12: idchoppers::shapeops::compute
-             at src/shapeops.rs:1423
-  13: idchoppers::do_shapeops
-             at src/bin/idchoppers.rs:490
-  14: idchoppers::run
-             at src/bin/idchoppers.rs:79
-  15: idchoppers::main
-             at src/bin/idchoppers.rs:20
-  16: __rust_maybe_catch_panic
-  17: std::panicking::try
-  18: std::rt::lang_start
-  19: main
-  20: __libc_start_main
-  21: _start
-         */
         let segment = &segments[endpoint.segment_index];
         if segment.data.borrow().processed {
             continue;
@@ -1153,10 +1104,11 @@ stack backtrace:
     }
 
     // Hm, well, we didn't find one, so...  go backwards to the next unprocessed segment
-    // period?  This doesn't make a lot of sense to me
+    // period?  This doesn't make a lot of sense to me; are we just assuming we'll hit one that
+    // shares a point?  TODO explicitly check for that perhaps?
     // XXX i can see it especially failing for degenerate cases where there's only one segment
     // in a polygon, oof.  though then there should still be two segments actually...?
-    // XXX also this will panic on underflow (good)
+    // XXX also this will panic on underflow (good, but maybe needs more explicit error handling)
     println!("hmm how did this happen");
     let mut i = start_index - 1;
     while segments[included_endpoints[i].segment_index].data.borrow().processed {
@@ -1470,32 +1422,6 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
 
     let included_endpoints2 = included_endpoints.into_iter().map(|(seg, endpoint)| endpoint).collect::<Vec<_>>();
 
-    /*
-    // Due to overlapping edges the included_segments array can be not wholly sorted
-    // XXX lol, what?  included_segments.sort_by(compare_by_sweep);
-    // ok so this appears to poorly sort in /reverse/ order, right to left
-    let mut sorted = false;
-    while !sorted {
-        sorted = true;
-        for i in 0 .. included_segments.len() {
-            if included_segments[i].endpoint > included_segments[i + 1].endpoint {
-                included_segments.swap(i, i + 1);
-                sorted = false;
-            }
-        }
-    }
-
-    // and then this nonsense rigs the .pos properties to actually point to the position of the
-    // other end of the edge, and swaps them in the process, so we end up going left to right,
-    // MAYBE???
-    for i in 0 .. included_segments.len() {
-        included_segments[i].index = i;
-        if included_segments[i].endpoint.end == SegmentEnd::Right {
-            included_segments.swap(i, included_segments[i].otherEvent.pos);
-        }
-    }
-    */
-
     // ---------------------------------------------------------------------------------------------
     // Construct the final polygon by grouping the segments together into contours
 
@@ -1531,13 +1457,13 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
             }
         }
 
+        // Walk around looking for a polygon until we come back to the starting point
         let contour = &mut final_polygon.contours[contourId];
         let mut pos = i;
         let starting_point = segment.left.point;
         contour.add(starting_point);
         let mut point = segment.right.point;
         let mut current_segment = segment;
-        // Walk around looking for a polygon until we come back to the starting point
         println!("building a contour from #{} {:?}", segment.index, starting_point);
         loop {
             {

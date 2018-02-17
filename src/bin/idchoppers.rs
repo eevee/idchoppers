@@ -99,18 +99,19 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
+                let full_map = idchoppers::map::Map::from_bare(&map);
                 println!("");
                 println!("{} - Doom format map", map_range.name);
+                /*
                 let texture_counts = map.count_textures();
                 let mut pairs: Vec<_> = texture_counts.iter().collect();
                 pairs.sort_by(|&(_, &(_, area0)), &(_, &(_, area1))| area0.partial_cmp(&area1).unwrap_or(Equal));
                 for &(name, &(count, area)) in pairs.iter().rev() {
                     println!("{:8} - {} uses, total area {} ≈ {} tiles", name, count, area, area / (64.0 * 64.0));
                 }
-                if let idchoppers::MapName::MAPxx(x) = map_range.name {
-                    if x == 2 {
-                        break;
-                    }
+                */
+                for line in map.lines {
+
                 }
             }
             idchoppers::BareMap::Hexen(map) => {
@@ -227,6 +228,50 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
             .set("x2", v1.x)
             .set("y2", v1.y)
             .set("class", classes.join(" "))
+        );
+
+        // Draw a temporary outline showing the space each line prevents you from occupying (dilate
+        // the world!)
+        let mut data = Data::new();
+        // TODO can be affected by dehacked, decorate, etc.  also at runtime (oh dear)
+        let radius = 16;
+        // Always start with the top vertex.  The player is always a square AABB, which yields
+        // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
+        // as well the same ways, albeit with an extra vertex.)
+        let top;
+        let bottom;
+        if v0.y > v1.y {
+            top = v0;
+            bottom = v1;
+        }
+        else {
+            top = v1;
+            bottom = v0;
+        }
+        if top.x < bottom.x {
+            // Down and to the right: start with the bottom-left corner of the top box
+            data = data
+            .move_to((top.x - radius, top.y - radius))
+            .line_to((top.x - radius, top.y + radius))
+            .line_to((top.x + radius, top.y + radius))
+            .line_to((bottom.x + radius, bottom.y + radius))
+            .line_to((bottom.x + radius, bottom.y - radius))
+            .line_to((bottom.x - radius, bottom.y - radius));
+        }
+        else {
+            // Down and to the left: start with the top-left corner of the top box
+            data = data
+            .move_to((top.x - radius, top.y + radius))
+            .line_to((top.x + radius, top.y + radius))
+            .line_to((top.x + radius, top.y - radius))
+            .line_to((bottom.x + radius, bottom.y - radius))
+            .line_to((bottom.x - radius, bottom.y - radius))
+            .line_to((bottom.x - radius, bottom.y + radius));
+        }
+        group.append(
+            Path::new()
+            .set("d", data)
+            .set("class", "line-dilation")
         );
     }
 
@@ -401,6 +446,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
 
 use idchoppers::shapeops;
+use idchoppers::shapeops::MapPoint;
 fn do_shapeops() -> Result<()> {
     let mut poly1 = idchoppers::shapeops::Polygon::new();
     for points in [
@@ -415,6 +461,54 @@ fn do_shapeops() -> Result<()> {
     for contour in &poly1.contours {
         println!("contour cw? {} external? {} holes? {:?}", contour.clockwise(), contour.external(), contour.holes);
     }
+
+    let mut poly2 = idchoppers::shapeops::Polygon::new();
+    for points in [
+        [(32., 32.), (32., 80.), (80., 32.)],
+    ].iter() {
+        let mut contour = idchoppers::shapeops::Contour::new();
+        contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
+        poly2.contours.push(contour);
+    }
+
+    println!("");
+    println!("");
+    println!("");
+    println!("bboxes: {:?}, {:?} / {:?} {:?}", poly1.bbox(), poly2.bbox(), poly1.bbox().intersects(&poly2.bbox()), poly1.bbox().intersection(&poly2.bbox()));
+    /*
+    println!("ok now my test sweep");
+    let results = idchoppers::shapeops::test_sweep(vec![
+        (MapPoint::new(0., 0.), MapPoint::new(16., 8.)),
+        (MapPoint::new(4., 0.), MapPoint::new(8., 8.)),
+        (MapPoint::new(8., 0.), MapPoint::new(12., 8.)),
+    ]);
+    for pair in results {
+        println!("  {:?}", pair);
+    }
+    */
+
+    let result = idchoppers::shapeops::compute(&poly1, &poly2, idchoppers::shapeops::BooleanOpType::Difference);
+
+    let bbox = result.bbox();
+    let mut group = Group::new();
+    for contour in result.contours {
+        let mut data = Data::new();
+        let point = contour.points.last().unwrap();
+        data = data.move_to((point.x, point.y));
+        for point in &contour.points {
+            data = data.line_to((point.x, point.y));
+        }
+        group.append(
+            Path::new()
+            .set("d", data)
+            .set("class", "line")
+        );
+    }
+    let doc = Document::new()
+        .set("viewBox", (bbox.min_x(), bbox.min_y(), bbox.size.width, bbox.size.height))
+        .add(Style::new(include_str!("map-svg.css")))
+        .add(group);
+    svg::save("idchoppers-shapeops.svg", &doc);
 
     return Ok(());
 }

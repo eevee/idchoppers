@@ -37,6 +37,18 @@ pub type MapRect = TypedRect<f32, MapSpace>;
 pub type MapSize = TypedSize2D<f32, MapSpace>;
 // TODO honestly a lot of this could be made generic over TypedPoint2D
 
+trait MapRectX {
+    fn touches(&self, other: &Self) -> bool;
+}
+impl MapRectX for MapRect {
+    fn touches(&self, other: &Self) -> bool {
+        self.origin.x <= other.origin.x + other.size.width &&
+       other.origin.x <=  self.origin.x + self.size.width &&
+        self.origin.y <= other.origin.y + other.size.height &&
+       other.origin.y <=  self.origin.y + self.size.height
+    }
+}
+
 #[derive(Debug)]
 struct Segment2 {
     source: MapPoint,
@@ -950,11 +962,15 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 
             return (1, pt1, pt2);
         }
-        SegmentIntersection::Segment(_, _) => {
+        SegmentIntersection::Segment(a, b) => {
             if seg1.data.borrow().polygon_index == seg2.data.borrow().polygon_index {
                 // the line segments overlap, but they belong to the same polygon
                 // FIXME would be nice to bubble up a Result i guess
-                panic!("Sorry, edges of the same polygon overlap");
+                println!("hm, what, is happening here...");
+                println!("seg1: {:?}", seg1);
+                println!("seg2: {:?}", seg2);
+                println!("overlap: {}, {}", a, b);
+                //panic!("Sorry, edges of the same polygon overlap");
             }
 
             // The line segments associated to le1 and le2 overlap
@@ -973,6 +989,7 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 else { EdgeType::DifferentTransition };
 
                 {
+                    println!("due to split, setting #{} to {:?} and #{} to {:?}", seg1.index, edge_type1, seg2.index, edge_type2);
                     seg1.data.borrow_mut().edge_type = edge_type1;
                     seg2.data.borrow_mut().edge_type = edge_type2;
                 }
@@ -980,8 +997,8 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // If the right endpoints don't coincide, then one lies on the other segment
                 // and needs to split it
                 match right_cmp {
-                    Ordering::Less =>    return (2, Some(seg2.right.point), None),
-                    Ordering::Greater => return (2, None, Some(seg1.right.point)),
+                    Ordering::Less =>    return (2, None, Some(seg1.right.point)),
+                    Ordering::Greater => return (2, Some(seg2.right.point), None),
                     Ordering::Equal =>   unreachable!(),
                 }
             }
@@ -1123,20 +1140,6 @@ fn find_next_segment<'a>(segments: &Vec<&'a BoolSweepSegment>, current_segment: 
     }
 }
 
-fn split_segment<'a>(seg: &'a BoolSweepSegment, pt: MapPoint, arena: &'a Arena<BoolSweepSegment>, active_segments: &mut BTreeSet<&'a BoolSweepSegment>, endpoint_queue: &mut BinaryHeap<Reverse<SweepEndpoint2<'a, RefCell<SegmentPacket>>>>) {
-    println!("ah!  a split at {:?}", pt);
-    let (left_owned, right_owned) = seg.split(pt, 0, 0);
-    let left: &_ = arena.alloc(left_owned);
-    let right: &_ = arena.alloc(right_owned);
-    // We split this segment in half, so replace the existing segment with its left end
-    // and give it a faux right endpoint
-    active_segments.remove(&seg);
-    active_segments.insert(left);
-    endpoint_queue.push(Reverse(SweepEndpoint2(left, SegmentEnd::Right)));
-    endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Left)));
-    endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Right)));
-}
-
 pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) -> Polygon {
     let subjectBB = subject.bbox();     // for optimizations 1 and 2
     let clippingBB = clipping.bbox();   // for optimizations 1 and 2
@@ -1160,7 +1163,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         }
         // XXX or...  what else here?  also use a match block above
     }
-    if ! subjectBB.intersects(&clippingBB) {
+    if ! subjectBB.touches(&clippingBB) {
         // the bounding boxes do not overlap
         if operation == BooleanOpType::Difference {
             return subject.clone();
@@ -1235,11 +1238,19 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
             {
                 let pt = $pt;
                 let seg = $seg;
-                println!("ah!  a split at {:?}", pt);
-                let (left_owned, right_owned) = seg.split(pt, segment_id, segment_id + 1);
-                segment_id += 2;
-                let left: &_ = arena.alloc(left_owned);
-                let right: &_ = arena.alloc(right_owned);
+                println!("ah!  splitting #{} at {:?}, into #{} and #{}", seg.index, pt, segment_id, segment_id + 1);
+                // It's not obvious at a glance, but in the original algorithm, the left end of a
+                // split inherits the original segment's data, and the right end gets data fresh.
+                // This is important since possibleIntersection assigns the whole segment's
+                // edge_type before splitting (and, TODO, maybe it shouldn't) but the right end
+                // isn't meant to inherit that!
+                let left: &_ = arena.alloc(SweepSegment::new(
+                    seg.left.point, pt, segment_id, seg.data.clone()));
+                segment_id += 1;
+                let right: &_ = arena.alloc(SweepSegment::new(
+                    pt, seg.right.point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index))));
+                segment_id += 1;
+
                 segment_order.push(left);
                 segment_order.push(right);
                 // We split this segment in half, so replace the existing segment with its left end
@@ -1249,6 +1260,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 endpoint_queue.push(Reverse(SweepEndpoint2(left, SegmentEnd::Right)));
                 endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Right)));
+                left
             }
         );
     );
@@ -1256,7 +1268,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
 
     loop {
         // Grab the next endpoint, or bail if we've run out
-        let Reverse(SweepEndpoint2(segment, end)) = match endpoint_queue.pop() {
+        let Reverse(SweepEndpoint2(mut segment, end)) = match endpoint_queue.pop() {
             Some(item) => item,
             None => break,
         };
@@ -1325,31 +1337,33 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         }
 
         // the line segment must be inserted into sweep_line
-        let maybe_below = active_segments.range(..segment).last().map(|v| *v);
-        let maybe_above = active_segments.range(segment..).next().map(|v| *v);
+        let mut maybe_below = active_segments.range(..segment).last().map(|v| *v);
+        let mut maybe_above = active_segments.range(segment..).next().map(|v| *v);
         active_segments.insert(segment);
         computeFields(operation, segment, maybe_below);
         // Check for intersections with the segment above
         let cross = possibleIntersection(Some(segment), maybe_above);
         if let Some(pt) = cross.1 {
-            _split_segment!(segment, pt);
+            segment = _split_segment!(segment, pt);
         }
         if let Some(pt) = cross.2 {
-            _split_segment!(maybe_above.unwrap(), pt);
+            maybe_above = Some(_split_segment!(maybe_above.unwrap(), pt));
         }
         if cross.0 == 2 {
             // NOTE: this seems super duper goofy to me; why call computeFields a second time
             // with the same args in particular?
+            // NOTE: answer is: because returning 2 means we changed the segments' edge types, so
+            // inResult might change!
             computeFields(operation, segment, maybe_below);
             computeFields(operation, maybe_above.unwrap(), Some(segment));
         }
         // Check for intersections with the segment below
         let cross = possibleIntersection(maybe_below, Some(segment));
         if let Some(pt) = cross.1 {
-            _split_segment!(maybe_below.unwrap(), pt);
+            maybe_below = Some(_split_segment!(maybe_below.unwrap(), pt));
         }
         if let Some(pt) = cross.2 {
-            _split_segment!(segment, pt);
+            segment = _split_segment!(segment, pt);
         }
         if cross.0 == 2 {
             computeFields(operation, maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));

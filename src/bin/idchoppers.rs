@@ -452,6 +452,8 @@ fn do_shapeops() -> Result<()> {
     for points in [
         [(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
         [(16., 16.), (16., 48.), (48., 48.), (48., 16.)],
+        //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
+        //[(0., 32.), (0., 96.), (64., 96.), (64., 32.)],
     ].iter() {
         let mut contour = idchoppers::shapeops::Contour::new();
         contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
@@ -465,6 +467,8 @@ fn do_shapeops() -> Result<()> {
     let mut poly2 = idchoppers::shapeops::Polygon::new();
     for points in [
         [(32., 32.), (32., 80.), (80., 32.)],
+        //[(64., 32.), (64., 96.), (128., 96.), (128., 32.)],
+        //[(64., 0.), (64., 64.), (128., 64.), (128., 0.)],
     ].iter() {
         let mut contour = idchoppers::shapeops::Contour::new();
         contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
@@ -487,27 +491,26 @@ fn do_shapeops() -> Result<()> {
     }
     */
 
-    let result = idchoppers::shapeops::compute(&poly1, &poly2, idchoppers::shapeops::BooleanOpType::Difference);
+    let result = idchoppers::shapeops::compute(&poly1, &poly2, idchoppers::shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
-    let mut group = Group::new();
-    for contour in result.contours {
-        let mut data = Data::new();
+    let mut data = Data::new();
+    for (i, contour) in result.contours.iter().enumerate() {
+        println!("contour #{}: external {:?}, counterclockwise {:?}", i, contour.external(), contour.counterclockwise());
         let point = contour.points.last().unwrap();
         data = data.move_to((point.x, point.y));
         for point in &contour.points {
             data = data.line_to((point.x, point.y));
         }
-        group.append(
-            Path::new()
-            .set("d", data)
-            .set("class", "line")
-        );
     }
     let doc = Document::new()
         .set("viewBox", (bbox.min_x(), bbox.min_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(group);
+        .add(
+            Path::new()
+            .set("d", data)
+            .set("class", "line")
+        );
     svg::save("idchoppers-shapeops.svg", &doc);
 
     return Ok(());

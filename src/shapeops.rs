@@ -217,67 +217,11 @@ enum SegmentEnd {
     Right,
 }
 
-#[derive(Debug)]
-struct SweepEndpoint {
-    end: SegmentEnd,
-    point: MapPoint,
-    other_point: MapPoint,
-    index: usize,
-    segment_index: usize,
-}
-//
-// Compare two sweep events
-impl cmp::PartialEq for SweepEndpoint {
-    fn eq(&self, other: &SweepEndpoint) -> bool {
-        return self.cmp(other) == Ordering::Equal;
-    }
-}
-impl cmp::Eq for SweepEndpoint { }
-
-impl cmp::PartialOrd for SweepEndpoint {
-    fn partial_cmp(&self, other: &SweepEndpoint) -> Option<Ordering> {
-        return Some(self.cmp(other));
-    }
-}
-
-impl cmp::Ord for SweepEndpoint {
-    fn cmp(&self, other: &SweepEndpoint) -> Ordering {
-        if self as *const _ == other as *const _ {
-            return Ordering::Equal;
-        }
-
-        return self.point.x.partial_cmp(&other.point.x).unwrap()
-            .then(self.point.y.partial_cmp(&other.point.y).unwrap())
-            .then_with(|| {
-                // If the points coincide, a right endpoint takes priority
-                if self.end == other.end {
-                    Ordering::Equal
-                }
-                else if self.end == SegmentEnd::Right {
-                    Ordering::Less
-                }
-                else {
-                    Ordering::Greater
-                }
-            })
-            .then_with(
-                // Same point, same end of their respective segments.  Use triangle area to give
-                // priority to the bottom point
-                || triangle_signed_area(other.point, other.other_point, self.other_point).partial_cmp(&0.).unwrap()
-            )
-            .then_with(
-                // Collinear!  Fall back to something totally arbitrary
-                // NOTE this used to be pol, unsure if this makes any real difference
-                || self.segment_index.cmp(&other.segment_index)
-            );
-    }
-}
-
 
 #[derive(Debug)]
 struct SweepSegment<T> {
-    left: SweepEndpoint,
-    right: SweepEndpoint,
+    left_point: MapPoint,
+    right_point: MapPoint,
     faces_outwards: bool,
     index: usize,
     data: T,
@@ -285,7 +229,7 @@ struct SweepSegment<T> {
 
 impl<T> SweepSegment<T> {
     fn new(point0: MapPoint, point1: MapPoint, index: usize, data: T) -> SweepSegment<T> {
-        let (left, right, faces_outwards) = if point0.x < point1.x || (point0.x == point1.x && point0.y < point1.y) {
+        let (left_point, right_point, faces_outwards) = if point0.x < point1.x || (point0.x == point1.x && point0.y < point1.y) {
             (point0, point1, false)
         }
         else {
@@ -293,41 +237,22 @@ impl<T> SweepSegment<T> {
         };
 
         return SweepSegment{
-            left: SweepEndpoint{
-                end: SegmentEnd::Left,
-                point: left,
-                other_point: right,
-                index: 0,
-                segment_index: index,
-            },
-            right: SweepEndpoint{
-                end: SegmentEnd::Right,
-                point: right,
-                other_point: left,
-                index: 0,
-                segment_index: index,
-            },
+            left_point,
+            right_point,
             // XXX this feels backwards to me; down_faces_outwards is only true if this is the left
             // endpoint of a left-pointing segment, which for a CCW contour is actually the
             // border between outside and inside!  maybe this thinks negative infinity is
             // upwards?
+            // TODO and, hang on, this is only even used in one place?  that seems weird?
             faces_outwards,
             index,
             data,
         };
     }
 
-    fn split_left(&mut self, midpoint: MapPoint, index: usize, data: T) -> SweepSegment<T> {
-        let old_right_point = self.right.point;
-        self.left.other_point = midpoint;
-        self.right.point = midpoint;
-
-        return Self::new(midpoint, old_right_point, index, data);
-    }
-
-    /** Is the line segment (point, other_poin) below point p */
+    /** Is the line segment (left_point, right_point) below point p */
     fn below(&self, p: MapPoint) -> bool {
-        return triangle_signed_area(self.left.point, self.right.point, p) > 0.;
+        return triangle_signed_area(self.left_point, self.right_point, p) > 0.;
     }
 
     /** Is the line segment (point, other_poin) above point p */
@@ -337,20 +262,20 @@ impl<T> SweepSegment<T> {
 
     /** Is the line segment (point, other_poin) a vertical line segment */
     fn vertical(&self) -> bool {
-        return self.left.point.x == self.right.point.x;
+        return self.left_point.x == self.right_point.x;
     }
 
     /** Return the line segment */
     fn segment(&self) -> Segment2 {
-        return Segment2::new(self.left.point, self.right.point);
+        return Segment2::new(self.left_point, self.right_point);
     }
 }
 
 impl<T: Clone> SweepSegment<T> {
     fn split(&self, midpoint: MapPoint, index1: usize, index2: usize) -> (Self, Self) {
         return (
-            Self::new(self.left.point, midpoint, index1, self.data.clone()),
-            Self::new(midpoint, self.right.point, index2, self.data.clone()),
+            Self::new(self.left_point, midpoint, index1, self.data.clone()),
+            Self::new(midpoint, self.right_point, index2, self.data.clone()),
         );
     }
 
@@ -377,8 +302,8 @@ impl<T> cmp::Ord for SweepSegment<T> {
             return Ordering::Equal;
         }
 
-        if triangle_signed_area(self.left.point, self.right.point, other.left.point) == 0. &&
-            triangle_signed_area(self.left.point, self.right.point, other.right.point) == 0.
+        if triangle_signed_area(self.left_point, self.right_point, other.left_point) == 0. &&
+            triangle_signed_area(self.left_point, self.right_point, other.right_point) == 0.
         {
             // Segments are collinear.  Sort by some arbitrary consistent criteria
             // XXX this used to be pol, which would cause far more ties...  is this ok?  does
@@ -387,10 +312,10 @@ impl<T> cmp::Ord for SweepSegment<T> {
                 //.then_with(|| compare_by_sweep(self, other));
         }
 
-        if self.left.point == other.left.point {
+        if self.left_point == other.left_point {
             // Both segments have the same left endpoint.  Sort on the right endpoint
             // TODO self.below() just checks triangle_signed_area again, same as above
-            if self.below(other.right.point) {
+            if self.below(other.right_point) {
                 return Ordering::Less;
             }
             else {
@@ -399,8 +324,8 @@ impl<T> cmp::Ord for SweepSegment<T> {
         }
 
         // has the segment associated to e1 been sorted in evp before the segment associated to e2?
-        if self.left < other.left {
-            if self.below(other.left.point) {
+        if SweepEndpoint(self, SegmentEnd::Left) < SweepEndpoint(other, SegmentEnd::Left) {
+            if self.below(other.left_point) {
                 return Ordering::Less;
             }
             else {
@@ -409,7 +334,7 @@ impl<T> cmp::Ord for SweepSegment<T> {
         }
         else {
             // The segment associated to e2 has been sorted in evp before the segment associated to e1
-            if other.above(self.left.point) {
+            if other.above(self.left_point) {
                 return Ordering::Less;
             }
             else {
@@ -423,36 +348,36 @@ impl<T> cmp::Ord for SweepSegment<T> {
 
 
 #[derive(Debug)]
-struct SweepEndpoint2<'a, T: 'a>(&'a SweepSegment<T>, SegmentEnd);
-impl<'a, T: 'a> SweepEndpoint2<'a, T> {
+struct SweepEndpoint<'a, T: 'a>(&'a SweepSegment<T>, SegmentEnd);
+impl<'a, T: 'a> SweepEndpoint<'a, T> {
     fn point(&self) -> MapPoint {
         match self.1 {
-            SegmentEnd::Left => self.0.left.point,
-            SegmentEnd::Right => self.0.right.point,
+            SegmentEnd::Left => self.0.left_point,
+            SegmentEnd::Right => self.0.right_point,
         }
     }
     fn other_point(&self) -> MapPoint {
         match self.1 {
-            SegmentEnd::Left => self.0.right.point,
-            SegmentEnd::Right => self.0.left.point,
+            SegmentEnd::Left => self.0.right_point,
+            SegmentEnd::Right => self.0.left_point,
         }
     }
 }
-impl<'a, T: 'a> cmp::PartialEq for SweepEndpoint2<'a, T> {
-    fn eq(&self, other: &SweepEndpoint2<'a, T>) -> bool {
+impl<'a, T: 'a> cmp::PartialEq for SweepEndpoint<'a, T> {
+    fn eq(&self, other: &SweepEndpoint<'a, T>) -> bool {
         return self.cmp(other) == Ordering::Equal;
     }
 }
-impl<'a, T: 'a> cmp::Eq for SweepEndpoint2<'a, T> { }
+impl<'a, T: 'a> cmp::Eq for SweepEndpoint<'a, T> { }
 
-impl<'a, T: 'a> cmp::PartialOrd for SweepEndpoint2<'a, T> {
-    fn partial_cmp(&self, other: &SweepEndpoint2<'a, T>) -> Option<Ordering> {
+impl<'a, T: 'a> cmp::PartialOrd for SweepEndpoint<'a, T> {
+    fn partial_cmp(&self, other: &SweepEndpoint<'a, T>) -> Option<Ordering> {
         return Some(self.cmp(other));
     }
 }
 
-impl<'a, T: 'a> cmp::Ord for SweepEndpoint2<'a, T> {
-    fn cmp(&self, other: &SweepEndpoint2<'a, T>) -> Ordering {
+impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
+    fn cmp(&self, other: &SweepEndpoint<'a, T>) -> Ordering {
         if self as *const _ == other as *const _ {
             return Ordering::Equal;
         }
@@ -714,8 +639,8 @@ impl Polygon {
         let segments = segments_mut;  // kill mutability so refs stay valid
         let mut endpoints = Vec::with_capacity(segments.len() * 2);
         for segment in &segments {
-            endpoints.push(&segment.left);
-            endpoints.push(&segment.right);
+            endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
+            endpoints.push(SweepEndpoint(segment, SegmentEnd::Right));
         }
         endpoints.sort();
 
@@ -738,14 +663,13 @@ impl Polygon {
         let mut holeOf = Vec::with_capacity(capacity);
         holeOf.resize(capacity, None);
         let mut nprocessed = 0;
-        for endpoint in &endpoints {
+        for &SweepEndpoint(segment, end) in &endpoints {
             // Stop if we've seen every contour
             if nprocessed >= self.contours.len() {
                 break;
             }
 
-            let segment = &segments[endpoint.segment_index];
-            if endpoint.end == SegmentEnd::Right {
+            if end == SegmentEnd::Right {
                 // This is a RIGHT endpoint; this segment is no longer active
                 active_segments.remove(&segment);
                 continue;
@@ -939,20 +863,20 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
             return (0, None, None);
         }
         SegmentIntersection::Point(intersection) => {
-            if seg1.left.point == seg2.left.point || seg1.right.point == seg2.right.point {
+            if seg1.left_point == seg2.left_point || seg1.right_point == seg2.right_point {
                 // the line segments intersect at an endpoint of both line segments
                 return (0, None, None);
             }
 
             // The line segments associated to le1 and le2 intersect
-            let pt1 = if seg1.left.point != intersection && seg1.right.point != intersection {
+            let pt1 = if seg1.left_point != intersection && seg1.right_point != intersection {
                 // the intersection point is not an endpoint of le1->segment ()
                 Some(intersection)
             }
             else {
                 None
             };
-            let pt2 = if seg2.left.point != intersection && seg2.right.point != intersection {
+            let pt2 = if seg2.left_point != intersection && seg2.right_point != intersection {
                 // the intersection point is not an endpoint of le2->segment ()
                 Some(intersection)
             }
@@ -974,10 +898,14 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
             }
 
             // The line segments associated to le1 and le2 overlap
-            let left_coincide = seg1.left.point == seg2.left.point;
-            let right_coincide = seg1.right.point == seg2.right.point;
-            let left_cmp = Ord::cmp(&seg1.left, &seg2.left);
-            let right_cmp = Ord::cmp(&seg1.right, &seg2.right);
+            let left_coincide = seg1.left_point == seg2.left_point;
+            let right_coincide = seg1.right_point == seg2.right_point;
+            let left_cmp = Ord::cmp(
+                &SweepEndpoint(seg1, SegmentEnd::Left),
+                &SweepEndpoint(seg2, SegmentEnd::Left));
+            let right_cmp = Ord::cmp(
+                &SweepEndpoint(seg1, SegmentEnd::Right),
+                &SweepEndpoint(seg2, SegmentEnd::Right));
 
             if left_coincide {
                 // Segments share a left endpoint, and may even be congruent
@@ -997,8 +925,8 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // If the right endpoints don't coincide, then one lies on the other segment
                 // and needs to split it
                 match right_cmp {
-                    Ordering::Less =>    return (2, None, Some(seg1.right.point)),
-                    Ordering::Greater => return (2, Some(seg2.right.point), None),
+                    Ordering::Less =>    return (2, None, Some(seg1.right_point)),
+                    Ordering::Greater => return (2, Some(seg2.right_point), None),
                     Ordering::Equal =>   unreachable!(),
                 }
             }
@@ -1008,8 +936,8 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // the left endpoint of one to split the other; we'll let the other split happen
                 // when we reach the split point
                 match left_cmp {
-                    Ordering::Less =>    return (3, Some(seg2.left.point), None),
-                    Ordering::Greater => return (3, None, Some(seg1.left.point)),
+                    Ordering::Less =>    return (3, Some(seg2.left_point), None),
+                    Ordering::Greater => return (3, None, Some(seg1.left_point)),
                     Ordering::Equal =>   unreachable!(),
                 }
             }
@@ -1018,8 +946,8 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // Segments share a right endpoint (and are not congruent), so the left end of
                 // one splits the other
                 match left_cmp {
-                    Ordering::Less =>    return (3, Some(seg1.split(seg2.left.point)))
-                    Ordering::Greater => return (3, Some(seg2.split(seg1.left.point)))
+                    Ordering::Less =>    return (3, Some(seg1.split(seg2.left_point)))
+                    Ordering::Greater => return (3, Some(seg2.split(seg1.left_point)))
                     Ordering::Equal =>   unreachable!(),
                 }
             }
@@ -1030,14 +958,14 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // FIXME observe that this code is now identical to the case above
                 match left_cmp {
                     Ordering::Less => {
-                        return (3, Some(seg1.split(seg2.left.point)));
-                        // self.split_segment(seg1, seg2.left.point);
-                        // self.split_segment(seg2, seg1.right.point);
+                        return (3, Some(seg1.split(seg2.left_point)));
+                        // self.split_segment(seg1, seg2.left_point);
+                        // self.split_segment(seg2, seg1.right_point);
                     }
                     Ordering::Greater => {
-                        return (3, Some(seg2.split(seg1.left.point)));
-                        // self.split_segment(seg1, seg2.right.point);
-                        // self.split_segment(seg2, seg1.left.point);
+                        return (3, Some(seg2.split(seg1.left_point)));
+                        // self.split_segment(seg1, seg2.right_point);
+                        // self.split_segment(seg2, seg1.left_point);
                     }
                     Ordering::Equal => unreachable!(),
                 }
@@ -1052,14 +980,14 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 // FIXME observe that this code is now identical to the case above
                 match left_cmp {
                     Ordering::Less => {
-                        return (3, Some(seg1.split(seg2.left.point)));
-                        // self.split_segment(seg1, seg2.right.point);
-                        // self.split_segment(seg1, seg2.left.point);
+                        return (3, Some(seg1.split(seg2.left_point)));
+                        // self.split_segment(seg1, seg2.right_point);
+                        // self.split_segment(seg1, seg2.left_point);
                     }
                     Ordering::Greater => {
-                        return (3, Some(seg2.split(seg1.left.point)));
-                        // self.split_segment(seg2, seg1.right.point);
-                        // self.split_segment(seg2, seg1.left.point);
+                        return (3, Some(seg2.split(seg1.left_point)));
+                        // self.split_segment(seg2, seg1.right_point);
+                        // self.split_segment(seg2, seg1.left_point);
                     }
                     Ordering::Equal => unreachable!(),
                 }
@@ -1090,10 +1018,10 @@ fn split_segment(&mut self, original: &BoolSweepSegment, cut: MapPoint) {
 }
 */
 
-fn find_next_segment<'a>(segments: &Vec<&'a BoolSweepSegment>, current_segment: &'a BoolSweepSegment, point: MapPoint, included_endpoints: &Vec<&'a SweepEndpoint>) -> (&'a BoolSweepSegment, MapPoint) {
+fn find_next_segment<'a>(current_segment: &'a BoolSweepSegment, point: MapPoint, included_endpoints: &Vec<SweepEndpoint<'a, RefCell<SegmentPacket>>>) -> (&'a BoolSweepSegment, MapPoint) {
     // TODO it does slightly bug me that this is slightly inefficient but, eh? i GUESS i could
     // track the endpoints everywhere, or even just pass both pairs of points around??
-    let mut start_index = if point == current_segment.left.point {
+    let mut start_index = if point == current_segment.left_point {
         current_segment.data.borrow().left_index
     }
     else {
@@ -1104,19 +1032,19 @@ fn find_next_segment<'a>(segments: &Vec<&'a BoolSweepSegment>, current_segment: 
     // processed segment
     for i in start_index .. included_endpoints.len() {
         let endpoint = &included_endpoints[i];
-        if point != endpoint.point {
+        if point != endpoint.point() {
             break;
         }
 
-        let segment = &segments[endpoint.segment_index];
+        let segment = endpoint.0;
         if segment.data.borrow().processed {
             continue;
         }
-        else if point == segment.left.point {
-            return (segment, segment.right.point);
+        else if point == segment.left_point {
+            return (segment, segment.right_point);
         }
         else {
-            return (segment, segment.left.point);
+            return (segment, segment.left_point);
         }
     }
 
@@ -1128,15 +1056,15 @@ fn find_next_segment<'a>(segments: &Vec<&'a BoolSweepSegment>, current_segment: 
     // XXX also this will panic on underflow (good, but maybe needs more explicit error handling)
     println!("hmm how did this happen");
     let mut i = start_index - 1;
-    while segments[included_endpoints[i].segment_index].data.borrow().processed {
+    while included_endpoints[i].0.data.borrow().processed {
         i -= 1;
     }
-    let segment = &segments[included_endpoints[i].segment_index];
-    if point == segment.left.point {
-        return (segment, segment.right.point);
+    let segment = included_endpoints[i].0;
+    if point == segment.left_point {
+        return (segment, segment.right_point);
     }
     else {
-        return (segment, segment.left.point);
+        return (segment, segment.left_point);
     }
 }
 
@@ -1199,8 +1127,8 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                     seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(polytype))));
                 segment_id += 1;
                 segment_order.push(segment);
-                endpoint_queue.push(Reverse(SweepEndpoint2(segment, SegmentEnd::Left)));
-                endpoint_queue.push(Reverse(SweepEndpoint2(segment, SegmentEnd::Right)));
+                endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
+                endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Right)));
                 svg_orig_group.append(
                     Line::new()
                     .set("x1", seg.source.x)
@@ -1245,10 +1173,10 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 // edge_type before splitting (and, TODO, maybe it shouldn't) but the right end
                 // isn't meant to inherit that!
                 let left: &_ = arena.alloc(SweepSegment::new(
-                    seg.left.point, pt, segment_id, seg.data.clone()));
+                    seg.left_point, pt, segment_id, seg.data.clone()));
                 segment_id += 1;
                 let right: &_ = arena.alloc(SweepSegment::new(
-                    pt, seg.right.point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index))));
+                    pt, seg.right_point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index))));
                 segment_id += 1;
 
                 segment_order.push(left);
@@ -1257,9 +1185,9 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 // and give it a faux right endpoint
                 active_segments.remove(&seg);
                 active_segments.insert(left);
-                endpoint_queue.push(Reverse(SweepEndpoint2(left, SegmentEnd::Right)));
-                endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Left)));
-                endpoint_queue.push(Reverse(SweepEndpoint2(right, SegmentEnd::Right)));
+                endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
+                endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Left)));
+                endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Right)));
                 left
             }
         );
@@ -1268,24 +1196,24 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
 
     loop {
         // Grab the next endpoint, or bail if we've run out
-        let Reverse(SweepEndpoint2(mut segment, end)) = match endpoint_queue.pop() {
+        let Reverse(SweepEndpoint(mut segment, end)) = match endpoint_queue.pop() {
             Some(item) => item,
             None => break,
         };
         println!("");
-        println!("LOOP ITERATION: {:?} of #{:?} {:?} -> {:?}", end, segment.index, segment.left.point, segment.right.point);
+        println!("LOOP ITERATION: {:?} of #{:?} {:?} -> {:?}", end, segment.index, segment.left_point, segment.right_point);
         for seg in &active_segments {
-            println!("  {} #{} {:?} -> {:?}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.left.point, seg.right.point);
+            println!("  {} #{} {:?} -> {:?}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.left_point, seg.right_point);
         }
         let endpoint = match end {
-            SegmentEnd::Left => &segment.left,
-            SegmentEnd::Right => &segment.right,
+            SegmentEnd::Left => segment.left_point,
+            SegmentEnd::Right => segment.right_point,
         };
         // optimization 2
-        if operation == BooleanOpType::Intersection && endpoint.point.x > MINMAXX {
+        if operation == BooleanOpType::Intersection && endpoint.x > MINMAXX {
             break;
         }
-        if operation == BooleanOpType::Difference && endpoint.point.x > subjectBB.max_x() {
+        if operation == BooleanOpType::Difference && endpoint.x > subjectBB.max_x() {
             break;
         }
 
@@ -1303,18 +1231,18 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 swept_segments.push(segment);
                 svg_swept_group.append(
                     Line::new()
-                    .set("x1", segment.left.point.x)
-                    .set("y1", segment.left.point.y)
-                    .set("x2", segment.right.point.x)
-                    .set("y2", segment.right.point.y)
+                    .set("x1", segment.left_point.x)
+                    .set("y1", segment.left_point.y)
+                    .set("x2", segment.right_point.x)
+                    .set("y2", segment.right_point.y)
                     .set("stroke", "green")
                     .set("stroke-width", 1)
                 );
                 svg_swept_group.append(
                     Text::new()
                     .add(svg::node::Text::new(format!("{}", segment.index)))
-                    .set("x", (segment.left.point.x + segment.right.point.x) / 2.0)
-                    .set("y", (segment.left.point.y + segment.right.point.y) / 2.0)
+                    .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
+                    .set("y", (segment.left_point.y + segment.right_point.y) / 2.0)
                     .set("fill", "darkgreen")
                     .set("text-anchor", "middle")
                     .set("alignment-baseline", "central")
@@ -1380,10 +1308,10 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     for seg in &active_segments {
         svg_active_group.append(
             Line::new()
-            .set("x1", seg.left.point.x)
-            .set("y1", seg.left.point.y)
-            .set("x2", seg.right.point.x)
-            .set("y2", seg.right.point.y)
+            .set("x1", seg.left_point.x)
+            .set("y1", seg.left_point.y)
+            .set("x2", seg.right_point.x)
+            .set("y2", seg.right_point.y)
             .set("stroke", "red")
             .set("stroke-width", 1)
         );
@@ -1403,17 +1331,16 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     // XXX since otherEvent is still kosher, i don't think this is a copy!
     let count = swept_segments.len();
     let mut included_segments = Vec::with_capacity(count);
-    // FIXME should probably replace this with SweepEndpoint2
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
         if segment.data.borrow().is_in_result {
             included_segments.push(segment);
-            included_endpoints.push((segment, &segment.left));
-            included_endpoints.push((segment, &segment.right));
+            included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
+            included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Right));
         }
     }
     included_segments.sort();
-    included_endpoints.sort_by(|a, b| Ord::cmp(a.1, b.1));
+    included_endpoints.sort();
 
     println!();
     println!("-- segments --");
@@ -1423,18 +1350,16 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     println!();
     println!("-- endpoints --");
     for ep in &included_endpoints {
-        println!("{:?} of #{} {:?} -> {:?}", ep.1, ep.0.index, ep.0.left.point, ep.0.right.point);
+        println!("{:?} of #{} {:?} -> {:?}", ep.1, ep.0.index, ep.0.left_point, ep.0.right_point);
     }
 
-    for (i, &(segment, endpoint)) in included_endpoints.iter().enumerate() {
+    for (i, &SweepEndpoint(segment, end)) in included_endpoints.iter().enumerate() {
         let mut packet = segment.data.borrow_mut();
-        match endpoint.end {
+        match end {
             SegmentEnd::Left => { packet.left_index = i; }
             SegmentEnd::Right => { packet.right_index = i; }
         }
     }
-
-    let included_endpoints2 = included_endpoints.into_iter().map(|(seg, endpoint)| endpoint).collect::<Vec<_>>();
 
     // ---------------------------------------------------------------------------------------------
     // Construct the final polygon by grouping the segments together into contours
@@ -1454,6 +1379,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
 
         // TODO wait, how much does this resemble the hole-finding stuff in Polygon?
         if let Some(below_segment_id) = segment.data.borrow().below_in_result {
+            // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
             let below_segment = &segment_order[below_segment_id];
             let below_contour_id = below_segment.data.borrow().contour_id;
             if ! below_segment.data.borrow().result_in_out {
@@ -1474,9 +1400,9 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         // Walk around looking for a polygon until we come back to the starting point
         let contour = &mut final_polygon.contours[contourId];
         let mut pos = i;
-        let starting_point = segment.left.point;
+        let starting_point = segment.left_point;
         contour.add(starting_point);
-        let mut point = segment.right.point;
+        let mut point = segment.right_point;
         let mut current_segment = segment;
         println!("building a contour from #{} {:?}", segment.index, starting_point);
         loop {
@@ -1484,14 +1410,14 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 let mut packet = current_segment.data.borrow_mut();
                 packet.processed = true; 
                 packet.contour_id = contourId;
-                packet.result_in_out = point == current_segment.right.point;
+                packet.result_in_out = point == current_segment.right_point;
             }
             if point == starting_point {
                 break;
             }
             contour.add(point);
 
-            let (next_segment, next_point) = find_next_segment(&segment_order, current_segment, point, &included_endpoints2);
+            let (next_segment, next_point) = find_next_segment(current_segment, point, &included_endpoints);
             println!("... #{} {:?}", next_segment.index, next_point);
             current_segment = next_segment;
             point = next_point;

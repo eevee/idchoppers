@@ -1018,33 +1018,31 @@ fn split_segment(&mut self, original: &BoolSweepSegment, cut: MapPoint) {
 }
 */
 
-fn find_next_segment<'a>(current_segment: &'a BoolSweepSegment, point: MapPoint, included_endpoints: &Vec<SweepEndpoint<'a, RefCell<SegmentPacket>>>) -> (&'a BoolSweepSegment, MapPoint) {
+type BoolSweepEndpoint<'a> = SweepEndpoint<'a, RefCell<SegmentPacket>>;
+fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_endpoints: &'a Vec<BoolSweepEndpoint>) -> &'a BoolSweepEndpoint<'a> {
     // TODO it does slightly bug me that this is slightly inefficient but, eh? i GUESS i could
     // track the endpoints everywhere, or even just pass both pairs of points around??
-    let mut start_index = if point == current_segment.left_point {
-        current_segment.data.borrow().left_index
+    let next_point = current_endpoint.other_point();
+    let start_index;
+    if current_endpoint.1 == SegmentEnd::Left {
+        start_index = current_endpoint.0.data.borrow().right_index;
     }
     else {
-        current_segment.data.borrow().right_index
+        start_index = current_endpoint.0.data.borrow().left_index;
     };
 
     // Ascend the list of endpoints until we find a match that isn't part of an already
     // processed segment
     for i in start_index .. included_endpoints.len() {
         let endpoint = &included_endpoints[i];
-        if point != endpoint.point() {
-            break;
-        }
-
-        let segment = endpoint.0;
-        if segment.data.borrow().processed {
+        if endpoint.0.data.borrow().processed {
             continue;
         }
-        else if point == segment.left_point {
-            return (segment, segment.right_point);
+        else if next_point == endpoint.point() {
+            return endpoint;
         }
         else {
-            return (segment, segment.left_point);
+            break;
         }
     }
 
@@ -1054,18 +1052,13 @@ fn find_next_segment<'a>(current_segment: &'a BoolSweepSegment, point: MapPoint,
     // XXX i can see it especially failing for degenerate cases where there's only one segment
     // in a polygon, oof.  though then there should still be two segments actually...?
     // XXX also this will panic on underflow (good, but maybe needs more explicit error handling)
-    println!("hmm how did this happen");
     let mut i = start_index - 1;
     while included_endpoints[i].0.data.borrow().processed {
         i -= 1;
     }
-    let segment = included_endpoints[i].0;
-    if point == segment.left_point {
-        return (segment, segment.right_point);
-    }
-    else {
-        return (segment, segment.left_point);
-    }
+    // TODO this might return a bogus point...!  need to check if endpoint.point() == next_point.
+    // it SHOULD work, but i don't know that i can absolutely guarantee it if the input is garbage
+    return &included_endpoints[i];
 }
 
 pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) -> Polygon {
@@ -1159,7 +1152,6 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     // XXX why do i need the explicit type anno here
     let mut active_segments: BTreeSet<&BoolSweepSegment> = BTreeSet::new();
     let mut swept_segments = Vec::new();
-    let mut svg_swept_group = Group::new();
 
     macro_rules! _split_segment (
         ($seg:expr, $pt:expr) => (
@@ -1188,6 +1180,18 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                 endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Right)));
+
+                // TODO this is a quick hack to fix an awkward problem: segments get "pointers" to
+                // the next segment below them that's in the final result, but since we split
+                // segments by creating two new ones rather than mutating the original, a pointer
+                // to a segment that later gets split becomes useless.  this checks for any such
+                // pointers and adjusts them.  a more robust fix would be nice, but it might
+                // involve doing a bit more work when assembling the final polygon?  or something
+                for other_seg in &segment_order {
+                    if other_seg.data.borrow().below_in_result == Some(seg.index) {
+                        other_seg.data.borrow_mut().below_in_result = Some(left.index);
+                    }
+                }
                 left
             }
         );
@@ -1217,10 +1221,6 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
             break;
         }
 
-        // FIXME need to avoid dupes somehow
-        // FIXME ownership issues here, maybe put it here after Right?
-        //swept_segments.push(segment);
-
         if end == SegmentEnd::Right {
             // delete line segment associated to "event" from sl and check for intersection between the neighbors of "event" in sl
             // NOTE the original code stored an iterator ref in posSL; not clear if there's an
@@ -1229,25 +1229,6 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
             // times
             if active_segments.remove(&segment) {
                 swept_segments.push(segment);
-                svg_swept_group.append(
-                    Line::new()
-                    .set("x1", segment.left_point.x)
-                    .set("y1", segment.left_point.y)
-                    .set("x2", segment.right_point.x)
-                    .set("y2", segment.right_point.y)
-                    .set("stroke", "green")
-                    .set("stroke-width", 1)
-                );
-                svg_swept_group.append(
-                    Text::new()
-                    .add(svg::node::Text::new(format!("{}", segment.index)))
-                    .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
-                    .set("y", (segment.left_point.y + segment.right_point.y) / 2.0)
-                    .set("fill", "darkgreen")
-                    .set("text-anchor", "middle")
-                    .set("alignment-baseline", "central")
-                    .set("font-size", 6)
-                );
 
                 let maybe_below = active_segments.range(..segment).last().map(|v| *v);
                 let maybe_above = active_segments.range(segment..).next().map(|v| *v);
@@ -1304,6 +1285,28 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     println!("");
 
     {
+    let mut svg_swept_group = Group::new();
+    for segment in &swept_segments {
+        svg_swept_group.append(
+            Line::new()
+            .set("x1", segment.left_point.x)
+            .set("y1", segment.left_point.y)
+            .set("x2", segment.right_point.x)
+            .set("y2", segment.right_point.y)
+            .set("stroke", "green")
+            .set("stroke-width", 1)
+        );
+        svg_swept_group.append(
+            Text::new()
+            .add(svg::node::Text::new(format!("{} {:?}", segment.index, segment.data.borrow().below_in_result)))
+            .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
+            .set("y", (segment.left_point.y + segment.right_point.y) / 2.0)
+            .set("fill", "darkgreen")
+            .set("text-anchor", "middle")
+            .set("alignment-baseline", "central")
+            .set("font-size", 4)
+        );
+    }
     let mut svg_active_group = Group::new();
     for seg in &active_segments {
         svg_active_group.append(
@@ -1402,25 +1405,25 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         let mut pos = i;
         let starting_point = segment.left_point;
         contour.add(starting_point);
-        let mut point = segment.right_point;
-        let mut current_segment = segment;
+        let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
         println!("building a contour from #{} {:?}", segment.index, starting_point);
         loop {
+            let current_segment = current_endpoint.0;
             {
                 let mut packet = current_segment.data.borrow_mut();
                 packet.processed = true; 
                 packet.contour_id = contourId;
-                packet.result_in_out = point == current_segment.right_point;
+                packet.result_in_out = current_endpoint.1 == SegmentEnd::Right;
             }
+
+            let point = current_endpoint.other_point();
             if point == starting_point {
                 break;
             }
             contour.add(point);
 
-            let (next_segment, next_point) = find_next_segment(current_segment, point, &included_endpoints);
-            println!("... #{} {:?}", next_segment.index, next_point);
-            current_segment = next_segment;
-            point = next_point;
+            current_endpoint = find_next_segment(current_endpoint, &included_endpoints);
+            println!("... #{} {:?}", current_endpoint.0.index, current_endpoint.point());
         }
 
         if depth[contourId] & 1 == 1 {

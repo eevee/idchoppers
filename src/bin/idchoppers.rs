@@ -491,7 +491,7 @@ fn do_shapeops() -> Result<()> {
     }
     */
 
-    let result = idchoppers::shapeops::compute(&poly1, &poly2, idchoppers::shapeops::BooleanOpType::Union);
+    let result = idchoppers::shapeops::compute(&vec![poly1, poly2], idchoppers::shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
     let mut data = Data::new();

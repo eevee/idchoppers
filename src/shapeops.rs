@@ -204,11 +204,6 @@ enum EdgeType {
     SameTransition,
     DifferentTransition,
 }
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum PolygonType {
-    Subject = 0,
-    Clipping = 1,
-}
 
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -744,7 +739,7 @@ impl ops::IndexMut<usize> for Polygon {
 
 #[derive(Clone, Debug)]
 struct SegmentPacket {
-    polygon_index: PolygonType,
+    polygon_index: usize,
     edge_type: EdgeType,
     down_faces_outwards: bool,
     below_down_faces_outwards: bool,
@@ -761,9 +756,9 @@ struct SegmentPacket {
 }
 
 impl SegmentPacket {
-    fn new(polytype: PolygonType) -> Self {
+    fn new(polygon_index: usize) -> Self {
         return SegmentPacket{
-            polygon_index: polytype,
+            polygon_index,
             edge_type: EdgeType::Normal,
             down_faces_outwards: false,
             below_down_faces_outwards: false,
@@ -836,7 +831,8 @@ fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
         EdgeType::Normal => match operation {
             BooleanOpType::Intersection => ! packet.below_down_faces_outwards,
             BooleanOpType::Union => packet.below_down_faces_outwards,
-            BooleanOpType::Difference => (packet.polygon_index == PolygonType::Subject && packet.below_down_faces_outwards) || (packet.polygon_index == PolygonType::Clipping && ! packet.below_down_faces_outwards),
+            // TODO this will, of course, need to become a bit more specific
+            BooleanOpType::Difference => (packet.polygon_index == 0 && packet.below_down_faces_outwards) || (packet.polygon_index == 1 && ! packet.below_down_faces_outwards),
             BooleanOpType::ExclusiveOr => true,
         }
         EdgeType::SameTransition => operation == BooleanOpType::Intersection || operation == BooleanOpType::Union,
@@ -1061,13 +1057,17 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     return &included_endpoints[i];
 }
 
-pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) -> Polygon {
+// TODO what if i have a slice of polygons, or a vec of &Polygons, or...?
+pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
+    // ---------------------------------------------------------------------------------------------
+    // Detect trivial cases that can be answered without doing any work
+
+    /*
+     * TODO restore these...  not entirely clear how/whether they'd apply in a world with n input
+     * polygons and no fixed operations
     let subjectBB = subject.bbox();     // for optimizations 1 and 2
     let clippingBB = clipping.bbox();   // for optimizations 1 and 2
     let MINMAXX = f32::min(subjectBB.max_x(), clippingBB.max_x()); // for optimization 2
-
-    // ---------------------------------------------------------------------------------------------
-    // Detect trivial cases that can be answered without doing any work
 
     if subject.contours.is_empty() || clipping.contours.is_empty() {
         // At least one of the polygons is empty
@@ -1096,6 +1096,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         }
         // XXX again, or what?
     }
+    */
 
     // ---------------------------------------------------------------------------------------------
     // Build a list of all the segments in the original polygons
@@ -1111,13 +1112,13 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
     let mut svg_orig_group = Group::new();
     // TODO could reserve space here and elsewhere
     let mut segment_order = Vec::new();
-    for &(polytype, polygon) in &[(PolygonType::Subject, subject), (PolygonType::Clipping, clipping)] {
+    for (i, polygon) in polygons.iter().enumerate() {
         for contour in &polygon.contours {
             for seg in contour.iter_segments() {
             /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
                     return;          // This can be done as preprocessing to avoid "polygons" with less than 3 edges */
                 let segment: &_ = arena.alloc(SweepSegment::new(
-                    seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(polytype))));
+                    seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(i))));
                 segment_id += 1;
                 segment_order.push(segment);
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
@@ -1128,7 +1129,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
                     .set("y1", seg.source.y)
                     .set("x2", seg.target.x)
                     .set("y2", seg.target.y)
-                    .set("stroke", if polytype == PolygonType::Subject { "#aaa" } else { "#ddd" })
+                    .set("stroke", if i == 0 { "#aaa" } else { "#ddd" })
                     .set("stroke-width", 1)
                 );
                 svg_orig_group.append(
@@ -1213,6 +1214,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
             SegmentEnd::Left => segment.left_point,
             SegmentEnd::Right => segment.right_point,
         };
+        /* TODO restore these
         // optimization 2
         if operation == BooleanOpType::Intersection && endpoint.x > MINMAXX {
             break;
@@ -1220,6 +1222,7 @@ pub fn compute(subject: &Polygon, clipping: &Polygon, operation: BooleanOpType) 
         if operation == BooleanOpType::Difference && endpoint.x > subjectBB.max_x() {
             break;
         }
+        */
 
         if end == SegmentEnd::Right {
             // delete line segment associated to "event" from sl and check for intersection between the neighbors of "event" in sl

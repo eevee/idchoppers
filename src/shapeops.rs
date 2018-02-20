@@ -782,7 +782,8 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
     {
         let mut packet = segment.data.borrow_mut();
 
-        // compute up_faces_outwards and is_outside_other_poly fields
+        // Compute up_faces_outwards and is_outside_other_poly, the fields that tell us which
+        // segments to include in the final polygon
         if let Some(below) = maybe_below {
             let below_packet = below.data.borrow();
             if packet.polygon_index == below_packet.polygon_index {
@@ -810,7 +811,6 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
             }
         }
         else {
-            // TODO wait, hang on, isn't this the DEFINITION of down facing outwards??
             packet.up_faces_outwards = false;
             packet.is_outside_other_poly = true;
         }
@@ -820,7 +820,7 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
     segment.data.borrow_mut().is_in_result = is_in_result;
 }
 
-/** @brief return if the segment belongs to the result of the Boolean operation */
+/* Check whether a segment should be included in the final polygon */
 fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
     let packet = segment.data.borrow();
     return match packet.edge_type {
@@ -837,7 +837,7 @@ fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
     }
 }
 
-/** @brief Process a posible intersection between the edges associated to the left events le1 and le2 */
+/* Check for and handle an intersection between two adjacent segments */
 fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2: Option<&'a BoolSweepSegment>) -> (usize, Option<MapPoint>, Option<MapPoint>) {
     let seg1 = match maybe_seg1 {
         Some(val) => val,
@@ -988,27 +988,6 @@ fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
         }
     }
 }
-
-/** @brief Divide the segment associated to left event le, updating pq and (implicitly) the status line */
-/*
-fn split_segment(&mut self, original: &BoolSweepSegment, cut: MapPoint) {
-//  std::cout << "YES. INTERSECTION" << std::endl;
-    // FIXME i don't quite understand what this is trying to do and i think it would be better
-    // solved by switching the points AND ALSO how is a rounding error possible here?  they
-    // should have exactly the same points!
-    if right.left < left.right {
-        // avoid a rounding error. The left event would be processed after the right event
-        //std::cout << "Oops" << std::endl;
-        //le.otherEvent.left = true;
-        //l.left = false;
-    }
-    if left.left < left.right {
-        // avoid a rounding error. The left event would be processed after the right event
-        //std::cout << "Oops2" << std::endl;
-    }
-    self.segments.push(right);
-}
-*/
 
 type BoolSweepEndpoint<'a> = SweepEndpoint<'a, RefCell<SegmentPacket>>;
 fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_endpoints: &'a Vec<BoolSweepEndpoint>) -> &'a BoolSweepEndpoint<'a> {
@@ -1177,6 +1156,22 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Right)));
+
+                /*
+                    // FIXME i don't quite understand what this is trying to do and i think it would be better
+                    // solved by switching the points AND ALSO how is a rounding error possible here?  they
+                    // should have exactly the same points!
+                    if right.left < left.right {
+                        // avoid a rounding error. The left event would be processed after the right event
+                        //std::cout << "Oops" << std::endl;
+                        //le.otherEvent.left = true;
+                        //l.left = false;
+                    }
+                    if left.left < left.right {
+                        // avoid a rounding error. The left event would be processed after the right event
+                        //std::cout << "Oops2" << std::endl;
+                    }
+                */
 
                 // TODO this is a quick hack to fix an awkward problem: segments get "pointers" to
                 // the next segment below them that's in the final result, but since we split

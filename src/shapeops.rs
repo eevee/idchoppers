@@ -238,7 +238,8 @@ impl<T> SweepSegment<T> {
             // endpoint of a left-pointing segment, which for a CCW contour is actually the
             // border between outside and inside!  maybe this thinks negative infinity is
             // upwards?
-            // TODO and, hang on, this is only even used in one place?  that seems weird?
+            // TODO and, hang on, this is only even used in one place?  in polygon::computeHoles??
+            // that seems weird?
             faces_outwards,
             index,
             data,
@@ -786,37 +787,36 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
         let mut packet = segment.data.borrow_mut();
 
         // compute down_faces_outwards and below_down_faces_outwards fields
-        match maybe_below {
-            Some(below) => {
-                let below_packet = below.data.borrow();
-                if packet.polygon_index == below_packet.polygon_index {
-                    // below line segment in sl belongs to the same polygon that "se" belongs to
-                    packet.down_faces_outwards = ! below_packet.down_faces_outwards;
-                    packet.below_down_faces_outwards = below_packet.below_down_faces_outwards;
+        if let Some(below) = maybe_below {
+            let below_packet = below.data.borrow();
+            if packet.polygon_index == below_packet.polygon_index {
+                // below line segment in sl belongs to the same polygon that "se" belongs to
+                packet.down_faces_outwards = ! below_packet.down_faces_outwards;
+                packet.below_down_faces_outwards = below_packet.below_down_faces_outwards;
+            }
+            else {
+                // below line segment in sl belongs to a different polygon that "se" belongs to
+                packet.down_faces_outwards = ! below_packet.below_down_faces_outwards;
+                if below.vertical() {
+                    packet.below_down_faces_outwards = ! below_packet.down_faces_outwards;
                 }
                 else {
-                    // below line segment in sl belongs to a different polygon that "se" belongs to
-                    packet.down_faces_outwards = ! below_packet.below_down_faces_outwards;
-                    if below.vertical() {
-                        packet.below_down_faces_outwards = ! below_packet.down_faces_outwards;
-                    }
-                    else {
-                        packet.below_down_faces_outwards = below_packet.down_faces_outwards;
-                    }
+                    packet.below_down_faces_outwards = below_packet.down_faces_outwards;
                 }
+            }
 
-                // compute below_in_result field
-                if below.vertical() || ! inResult(operation, below) {
-                    packet.below_in_result = below_packet.below_in_result;
-                }
-                else {
-                    packet.below_in_result = Some(below.index);
-                }
+            // compute below_in_result field
+            if below.vertical() || ! inResult(operation, below) {
+                packet.below_in_result = below_packet.below_in_result;
             }
-            None => {
-                packet.down_faces_outwards = false;
-                packet.below_down_faces_outwards = true;
+            else {
+                packet.below_in_result = Some(below.index);
             }
+        }
+        else {
+            // TODO wait, hang on, isn't this the DEFINITION of down facing outwards??
+            packet.down_faces_outwards = false;
+            packet.below_down_faces_outwards = true;
         }
     }
 

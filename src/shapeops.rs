@@ -237,7 +237,7 @@ impl<T> SweepSegment<T> {
         return SweepSegment{
             left_point,
             right_point,
-            // TODO hang on, this is only even used in one place?  in polygon::computeHoles??
+            // TODO hang on, this is only even used in one place?  in polygon::compute_holes??
             // that seems weird?
             faces_outwards,
             index,
@@ -606,7 +606,7 @@ impl Polygon {
         }
     }
 
-    pub fn computeHoles(&mut self) {
+    pub fn compute_holes(&mut self) {
         if self.contours.len() < 2 {
             if self.contours.len() == 1 && self.contours[0].clockwise() {
                 self.contours[0].changeOrientation();
@@ -830,8 +830,8 @@ impl BoolSweepSegment {
 }
 
 /** @brief compute several fields of left event le */
-fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
-    // anon scope so the packet goes away at the end and we can reborrow to call inResult
+fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
+    // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
     {
         let mut packet = segment.data.borrow_mut();
 
@@ -870,7 +870,7 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
             }
 
             // compute below_in_result field
-            if below.vertical() || ! inResult(operation, below) {
+            if below.vertical() || ! is_in_result(operation, below) {
                 packet.below_in_result = below_packet.below_in_result;
             }
             else {
@@ -888,12 +888,12 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
         }
     }
 
-    let is_in_result = inResult(operation, segment);
+    let is_in_result = is_in_result(operation, segment);
     segment.data.borrow_mut().is_in_result = is_in_result;
 }
 
 /* Check whether a segment should be included in the final polygon */
-fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
+fn is_in_result(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
     let packet = segment.data.borrow();
     return match packet.edge_type {
         EdgeType::Normal => match operation {
@@ -910,7 +910,7 @@ fn inResult(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
 }
 
 /* Check for and handle an intersection between two adjacent segments */
-fn possibleIntersection<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2: Option<&'a BoolSweepSegment>) -> (usize, Option<MapPoint>, Option<MapPoint>) {
+fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2: Option<&'a BoolSweepSegment>) -> (usize, Option<MapPoint>, Option<MapPoint>) {
     let seg1 = match maybe_seg1 {
         Some(val) => val,
         None => return (0, None, None),
@@ -1262,7 +1262,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 println!("ah!  splitting #{} at {:?}, into #{} and #{}", seg.index, pt, segment_id, segment_id + 1);
                 // It's not obvious at a glance, but in the original algorithm, the left end of a
                 // split inherits the original segment's data, and the right end gets data fresh.
-                // This is important since possibleIntersection assigns the whole segment's
+                // This is important since handle_intersections assigns the whole segment's
                 // edge_type before splitting (and, TODO, maybe it shouldn't) but the right end
                 // isn't meant to inherit that!
                 let left: &_ = arena.alloc(SweepSegment::new(
@@ -1357,7 +1357,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
 
                 let maybe_below = active_segments.range(..segment).last().map(|v| *v);
                 let maybe_above = active_segments.range(segment..).next().map(|v| *v);
-                let cross = possibleIntersection(maybe_below, maybe_above);
+                let cross = handle_intersections(maybe_below, maybe_above);
 
                 if let Some(pt) = cross.1 {
                     _split_segment!(maybe_below.unwrap(), pt);
@@ -1374,9 +1374,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         let mut maybe_below = active_segments.range(..segment).last().map(|v| *v);
         let mut maybe_above = active_segments.range(segment..).next().map(|v| *v);
         active_segments.insert(segment);
-        computeFields(operation, segment, maybe_below);
+        compute_fields(operation, segment, maybe_below);
         // Check for intersections with the segment above
-        let cross = possibleIntersection(Some(segment), maybe_above);
+        let cross = handle_intersections(Some(segment), maybe_above);
         if let Some(pt) = cross.1 {
             segment = _split_segment!(segment, pt);
         }
@@ -1384,15 +1384,15 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             maybe_above = Some(_split_segment!(maybe_above.unwrap(), pt));
         }
         if cross.0 == 2 {
-            // NOTE: this seems super duper goofy to me; why call computeFields a second time
+            // NOTE: this seems super duper goofy to me; why call compute_fields a second time
             // with the same args in particular?
             // NOTE: answer is: because returning 2 means we changed the segments' edge types, so
-            // inResult might change!
-            computeFields(operation, segment, maybe_below);
-            computeFields(operation, maybe_above.unwrap(), Some(segment));
+            // is_in_result might change!
+            compute_fields(operation, segment, maybe_below);
+            compute_fields(operation, maybe_above.unwrap(), Some(segment));
         }
         // Check for intersections with the segment below
-        let cross = possibleIntersection(maybe_below, Some(segment));
+        let cross = handle_intersections(maybe_below, Some(segment));
         if let Some(pt) = cross.1 {
             maybe_below = Some(_split_segment!(maybe_below.unwrap(), pt));
         }
@@ -1400,8 +1400,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             segment = _split_segment!(segment, pt);
         }
         if cross.0 == 2 {
-            computeFields(operation, maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));
-            computeFields(operation, segment, maybe_below);
+            compute_fields(operation, maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));
+            compute_fields(operation, segment, maybe_below);
         }
     }
 

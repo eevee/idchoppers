@@ -461,7 +461,7 @@ fn do_shapeops() -> Result<()> {
         contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
         poly1.contours.push(contour);
     }
-    poly1.computeHoles();
+    poly1.compute_holes();
     for contour in &poly1.contours {
         println!("contour cw? {} external? {} holes? {:?}", contour.clockwise(), contour.external(), contour.holes);
     }

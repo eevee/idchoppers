@@ -451,7 +451,9 @@ fn do_shapeops() -> Result<()> {
     let mut poly1 = idchoppers::shapeops::Polygon::new();
     for points in [
         [(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
-        [(16., 16.), (16., 48.), (48., 48.), (48., 16.)],
+        //[(16., 16.), (16., 48.), (48., 48.), (48., 16.)],
+        [(8., 8.), (8., 56.), (56., 56.), (56., 8.)],
+        [(24., 24.), (24., 40.), (40., 40.), (40., 24.)],
         //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
         //[(0., 32.), (0., 96.), (64., 96.), (64., 32.)],
     ].iter() {
@@ -466,7 +468,9 @@ fn do_shapeops() -> Result<()> {
 
     let mut poly2 = idchoppers::shapeops::Polygon::new();
     for points in [
-        [(32., 32.), (32., 80.), (80., 32.)],
+        //[(32., 32.), (32., 80.), (80., 32.)],
+        // [(56., 32.), (56., 80.), (104., 32.)],
+        [(32., 32.), (32., 48.), (48., 48.), (48., 32.)],
         //[(64., 32.), (64., 96.), (128., 96.), (128., 32.)],
         //[(64., 0.), (64., 64.), (128., 64.), (128., 0.)],
     ].iter() {
@@ -494,23 +498,34 @@ fn do_shapeops() -> Result<()> {
     let result = idchoppers::shapeops::compute(&vec![poly1, poly2], idchoppers::shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
-    let mut data = Data::new();
-    for (i, contour) in result.contours.iter().enumerate() {
-        println!("contour #{}: external {:?}, counterclockwise {:?}", i, contour.external(), contour.counterclockwise());
-        let point = contour.points.last().unwrap();
-        data = data.move_to((point.x, point.y));
-        for point in &contour.points {
-            data = data.line_to((point.x, point.y));
-        }
-    }
-    let doc = Document::new()
-        .set("viewBox", (bbox.min_x(), bbox.min_y(), bbox.size.width, bbox.size.height))
+    let mut doc = Document::new()
+        .set("viewBox", (bbox.min_x() - 16., -bbox.max_y() - 16., bbox.size.width + 32., bbox.size.height + 32.))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(
+    ;
+    //let mut data = Data::new();
+    for (i, contour) in result.contours.iter().enumerate() {
+        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
+    let mut data = Data::new();
+        let point = contour.points.last().unwrap();
+        data = data.move_to((point.x, -point.y));
+        for point in &contour.points {
+            data = data.line_to((point.x, -point.y));
+        }
+        doc = doc.add(
             Path::new()
             .set("d", data)
-            .set("class", "line")
+            //.set("class", "line")
+        )
+        .add(
+            svg::node::element::Text::new()
+            .add(svg::node::Text::new(format!("{}", i)))
+            .set("x", contour.points[0].x + 8.)
+            .set("y", -contour.points[0].y - 8.)
+            .set("text-anchor", "middle")
+            .set("alignment-baseline", "central")
+            .set("font-size", 8)
         );
+    }
     svg::save("idchoppers-shapeops.svg", &doc);
 
     return Ok(());

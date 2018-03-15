@@ -24,7 +24,10 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use std::f32;
 
+
+use bit_vec::BitVec;
 use euclid::TypedPoint2D;
 use euclid::TypedRect;
 use euclid::TypedSize2D;
@@ -341,6 +344,7 @@ impl<T> cmp::Ord for SweepSegment<T> {
 
 #[derive(Debug)]
 struct SweepEndpoint<'a, T: 'a>(&'a SweepSegment<T>, SegmentEnd);
+
 impl<'a, T: 'a> SweepEndpoint<'a, T> {
     fn point(&self) -> MapPoint {
         match self.1 {
@@ -734,38 +738,52 @@ impl ops::IndexMut<usize> for Polygon {
 // -----------------------------------------------------------------------------
 // booleanop
 
+type PolygonIndex = usize;
+
 #[derive(Clone, Debug)]
 struct SegmentPacket {
-    polygon_index: usize,
+    polygon_index: PolygonIndex,
     edge_type: EdgeType,
     up_faces_outwards: bool,
     is_outside_other_poly: bool,
+    // Which original polygons contain this segment?  (The polygon this segment came from is always
+    // assumed to contain it; which side faces outwards is determined by up_faces_outwards.)
+    in_polygons: BitVec,
+
     is_in_result: bool,
     // Index of the segment below this one that's actually included in the result
     below_in_result: Option<usize>,
 
     // Used in connectEdges
-    processed: bool,
+    left_processed: bool,
+    right_processed: bool,
     contour_id: usize,
+    left_contour_id: Option<usize>,
+    right_contour_id: Option<usize>,
     result_in_out: bool,
     left_index: usize,
     right_index: usize,
 }
 
 impl SegmentPacket {
-    fn new(polygon_index: usize) -> Self {
+    fn new(polygon_index: usize, npolygons: usize) -> Self {
         return SegmentPacket{
             polygon_index,
             edge_type: EdgeType::Normal,
             up_faces_outwards: false,
             is_outside_other_poly: false,
+            in_polygons: BitVec::from_elem(npolygons, false),
+
             is_in_result: false,
             below_in_result: None,
 
-            processed: false,
+            left_processed: false,
+            right_processed: false,
             // Slightly hokey, but means everything defaults to a single outermost shell of the
             // poly, which isn't unreasonable really
             contour_id: 0,
+            left_contour_id: None,
+            right_contour_id: None,
             result_in_out: false,
             // Definitely hokey
             left_index: 0,
@@ -774,7 +792,42 @@ impl SegmentPacket {
     }
 }
 
+impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
+    fn is_processed(&self) -> bool {
+        let packet = self.0.data.borrow();
+        return match self.1 {
+            SegmentEnd::Left => packet.left_processed,
+            SegmentEnd::Right => packet.right_processed,
+        };
+    }
+
+    fn mark_processed(&self) {
+        let mut packet = self.0.data.borrow_mut();
+        match self.1 {
+            SegmentEnd::Left => { packet.left_processed = true; }
+            SegmentEnd::Right => { packet.right_processed = true; }
+        }
+    }
+
+    fn is_one_sided(&self) -> bool {
+        return self.0.is_one_sided();
+    }
+
+    fn faces_void(&self) -> bool {
+        let packet = self.0.data.borrow();
+        // We face into the void iff we're in no other polygons, and we're the side of the segment
+        // facing outwards from our original polygon.
+        return self.is_one_sided() &&
+            (self.1 == SegmentEnd::Left) == packet.up_faces_outwards;
+    }
+}
+
 type BoolSweepSegment = SweepSegment<RefCell<SegmentPacket>>;
+impl BoolSweepSegment {
+    fn is_one_sided(&self) -> bool {
+        return self.data.borrow().in_polygons.none();
+    }
+}
 
 /** @brief compute several fields of left event le */
 fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
@@ -790,6 +843,11 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
                 // below line segment in sl belongs to the same polygon that "se" belongs to
                 packet.up_faces_outwards = ! below_packet.up_faces_outwards;
                 packet.is_outside_other_poly = below_packet.is_outside_other_poly;
+
+                // This doesn't change containment at all
+                // TODO hmm well this is ugly, and /possibly/ unnecessary
+                packet.in_polygons.clear();
+                packet.in_polygons.union(&below_packet.in_polygons);
             }
             else {
                 // below line segment in sl belongs to a different polygon that "se" belongs to
@@ -800,6 +858,15 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
                 else {
                     packet.is_outside_other_poly = below_packet.up_faces_outwards;
                 }
+
+                // The other polygon should either be added or removed, depending on which way the
+                // below segment faces
+                packet.in_polygons.clear();
+                packet.in_polygons.union(&below_packet.in_polygons);
+                let is_outside = packet.is_outside_other_poly;
+                packet.in_polygons.set(below_packet.polygon_index, ! is_outside);
+                let polygon_index = packet.polygon_index;
+                packet.in_polygons.set(polygon_index, false);
             }
 
             // compute below_in_result field
@@ -813,6 +880,11 @@ fn computeFields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_bel
         else {
             packet.up_faces_outwards = false;
             packet.is_outside_other_poly = true;
+
+            packet.in_polygons.clear();
+            let polygon_index = packet.polygon_index;
+            let is_outside = packet.is_outside_other_poly;
+            //packet.in_polygons.set(polygon_index, is_outside);
         }
     }
 
@@ -994,7 +1066,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     // TODO it does slightly bug me that this is slightly inefficient but, eh? i GUESS i could
     // track the endpoints everywhere, or even just pass both pairs of points around??
     let next_point = current_endpoint.other_point();
-    let start_index;
+    let mut start_index;
     if current_endpoint.1 == SegmentEnd::Left {
         start_index = current_endpoint.0.data.borrow().right_index;
     }
@@ -1002,19 +1074,70 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
         start_index = current_endpoint.0.data.borrow().left_index;
     };
 
+    while start_index > 0 && included_endpoints[start_index - 1].point() == next_point {
+        start_index -= 1;
+    }
+
+    // Find the closest angle.  That means the biggest dot product, or the smallest, maybe.
+    let mut closest_dot = f32::NAN;
+    let mut closest_endpoint = None;
+    let mut seen_ccw = false;
+    let current_vec = next_point - current_endpoint.point();
     // Ascend the list of endpoints until we find a match that isn't part of an already
     // processed segment
     for i in start_index .. included_endpoints.len() {
         let endpoint = &included_endpoints[i];
-        if endpoint.0.data.borrow().processed {
+        if endpoint.is_processed() {
+            continue;
+        }
+        else if endpoint == current_endpoint {
+            // FIXME is this necessary?  i.e., is the passed-in endpoint already marked processed
+            // (yes)
+            continue;
+        }
+        else if endpoint.0 == current_endpoint.0 {
+            // DEFINITELY do not backtrack along the same line holy jesus
+            // FIXME the problem here is that the other edge of this line is a hole, and i only
+            // proactively mark the outside as already processed...
             continue;
         }
         else if next_point == endpoint.point() {
-            return endpoint;
+            let vec = endpoint.other_point() - endpoint.point();
+            let dot = current_vec.dot(vec) / vec.length();
+
+            let this_ccw = current_vec.cross(vec) > 0.;
+            if this_ccw {
+                // This angle is counterclockwise; if all we've seen so far is clockwise then it
+                // wins by default
+                if ! seen_ccw {
+                    seen_ccw = true;
+                    closest_dot = dot;
+                    closest_endpoint = Some(endpoint);
+                    continue;
+                }
+            }
+            else {
+                // This angle is clockwise; only consider it at all if we haven't seen a ccw angle
+                if seen_ccw {
+                    continue;
+                }
+            }
+
+            if closest_endpoint.is_none() || (this_ccw && dot > closest_dot) || (!this_ccw && dot < closest_dot) {
+                closest_dot = dot;
+                closest_endpoint = Some(endpoint);
+            }
         }
         else {
             break;
         }
+    }
+
+    if let Some(endpoint) = closest_endpoint {
+        return endpoint;
+    }
+    else {
+        panic!("ran out of endpoints");
     }
 
     // Hm, well, we didn't find one, so...  go backwards to the next unprocessed segment
@@ -1023,6 +1146,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     // XXX i can see it especially failing for degenerate cases where there's only one segment
     // in a polygon, oof.  though then there should still be two segments actually...?
     // XXX also this will panic on underflow (good, but maybe needs more explicit error handling)
+    /*
     let mut i = start_index - 1;
     while included_endpoints[i].0.data.borrow().processed {
         i -= 1;
@@ -1030,6 +1154,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     // TODO this might return a bogus point...!  need to check if endpoint.point() == next_point.
     // it SHOULD work, but i don't know that i can absolutely guarantee it if the input is garbage
     return &included_endpoints[i];
+    */
 }
 
 // TODO what if i have a slice of polygons, or a vec of &Polygons, or...?
@@ -1093,7 +1218,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
                     return;          // This can be done as preprocessing to avoid "polygons" with less than 3 edges */
                 let segment: &_ = arena.alloc(SweepSegment::new(
-                    seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(i))));
+                    seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(i, polygons.len()))));
                 segment_id += 1;
                 segment_order.push(segment);
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
@@ -1101,9 +1226,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 svg_orig_group.append(
                     Line::new()
                     .set("x1", seg.source.x)
-                    .set("y1", seg.source.y)
+                    .set("y1", -seg.source.y)
                     .set("x2", seg.target.x)
-                    .set("y2", seg.target.y)
+                    .set("y2", -seg.target.y)
                     .set("stroke", if i == 0 { "#aaa" } else { "#ddd" })
                     .set("stroke-width", 1)
                 );
@@ -1111,7 +1236,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                     Text::new()
                     .add(svg::node::Text::new(format!("{}", segment_id - 1)))
                     .set("x", (seg.source.x + seg.target.x) / 2.0)
-                    .set("y", (seg.source.y + seg.target.y) / 2.0)
+                    .set("y", -(seg.source.y + seg.target.y) / 2.0)
                     .set("text-anchor", "middle")
                     .set("alignment-baseline", "central")
                     .set("font-size", 8)
@@ -1144,7 +1269,13 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                     seg.left_point, pt, segment_id, seg.data.clone()));
                 segment_id += 1;
                 let right: &_ = arena.alloc(SweepSegment::new(
-                    pt, seg.right_point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index))));
+                    pt, seg.right_point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index, polygons.len()))));
+                {
+                    // TODO ugly ass copy
+                    let mut packet = right.data.borrow_mut();
+                    packet.in_polygons.clear();
+                    packet.in_polygons.union(&left.data.borrow().in_polygons);
+                }
                 segment_id += 1;
 
                 segment_order.push(left);
@@ -1284,17 +1415,23 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         svg_swept_group.append(
             Line::new()
             .set("x1", segment.left_point.x)
-            .set("y1", segment.left_point.y)
+            .set("y1", -segment.left_point.y)
             .set("x2", segment.right_point.x)
-            .set("y2", segment.right_point.y)
+            .set("y2", -segment.right_point.y)
             .set("stroke", "green")
             .set("stroke-width", 1)
         );
+        let mut in_polys = Vec::new();
+        for i in 0..polygons.len() {
+            if segment.data.borrow().in_polygons[i] {
+                in_polys.push(i);
+            }
+        }
         svg_swept_group.append(
             Text::new()
-            .add(svg::node::Text::new(format!("{} {:?}", segment.index, segment.data.borrow().below_in_result)))
+            .add(svg::node::Text::new(format!("{} {:?}", segment.index, in_polys)))
             .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
-            .set("y", (segment.left_point.y + segment.right_point.y) / 2.0)
+            .set("y", -(segment.left_point.y + segment.right_point.y) / 2.0)
             .set("fill", "darkgreen")
             .set("text-anchor", "middle")
             .set("alignment-baseline", "central")
@@ -1306,15 +1443,15 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         svg_active_group.append(
             Line::new()
             .set("x1", seg.left_point.x)
-            .set("y1", seg.left_point.y)
+            .set("y1", -seg.left_point.y)
             .set("x2", seg.right_point.x)
-            .set("y2", seg.right_point.y)
+            .set("y2", -seg.right_point.y)
             .set("stroke", "red")
             .set("stroke-width", 1)
         );
     }
     let doc = Document::new()
-        .set("viewBox", (-16, -16, 128, 128))
+        .set("viewBox", (-16, -112, 128, 128))
         .add(Style::new("line:hover { stroke: gold; }"))
         .add(svg_orig_group)
         .add(svg_swept_group)
@@ -1330,7 +1467,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let mut included_segments = Vec::with_capacity(count);
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
-        if segment.data.borrow().is_in_result {
+        if segment.data.borrow().is_in_result || true {
             included_segments.push(segment);
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Right));
@@ -1364,49 +1501,43 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let mut final_polygon = Polygon::new();
     let mut depth = Vec::new();
     let mut holeOf = Vec::new();
-    for (i, &segment) in included_segments.iter().enumerate() {
-        if segment.data.borrow().processed {
+    for (i, endpoint) in included_endpoints.iter().enumerate() {
+        let &SweepEndpoint(segment, end) = endpoint;
+        if endpoint.is_processed() {
             continue;
         }
 
-        final_polygon.contours.push(Contour::new());
-        let contourId = final_polygon.contours.len() - 1;
-        depth.push(0);
-        holeOf.push(None);
-
-        // TODO wait, how much does this resemble the hole-finding stuff in Polygon?
-        if let Some(below_segment_id) = segment.data.borrow().below_in_result {
-            // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
-            let below_segment = &segment_order[below_segment_id];
-            let below_contour_id = below_segment.data.borrow().contour_id;
-            if ! below_segment.data.borrow().result_in_out {
-                final_polygon[below_contour_id].addHole(contourId);
-                holeOf[contourId] = Some(below_contour_id);
-                depth[contourId] = depth[below_contour_id] + 1;
-                final_polygon.contours[contourId].setExternal(false);
+        // FIXME maybe do this in previous loop
+        if segment.data.borrow().in_polygons.none() {
+            if end == SegmentEnd::Left && segment.data.borrow().up_faces_outwards {
+                segment.data.borrow_mut().left_processed = true;
+                continue;
             }
-            else if ! final_polygon[below_contour_id].external() {
-                // XXX wait how is this guaranteed to exist, let alone not be None??
-                final_polygon[holeOf[below_contour_id].unwrap()].addHole(contourId);
-                holeOf[contourId] = holeOf[below_contour_id];
-                depth[contourId] = depth[below_contour_id];
-                final_polygon.contours[contourId].setExternal(false);
+            else if end == SegmentEnd::Right && ! segment.data.borrow().up_faces_outwards {
+                segment.data.borrow_mut().right_processed = true;
+                continue;
             }
         }
 
         // Walk around looking for a polygon until we come back to the starting point
-        let contour = &mut final_polygon.contours[contourId];
-        let mut pos = i;
+        let mut contour = Contour::new();
+        let contourId = final_polygon.contours.len();
         let starting_point = segment.left_point;
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
-        println!("building a contour from #{} {:?}", segment.index, starting_point);
+        println!("building a contour from #{} {:?} {:?}", segment.index, end, starting_point);
         loop {
+            current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
+            println!(" -> from polygon {}, others {:?}", current_segment.data.borrow().polygon_index, current_segment.data.borrow().in_polygons);
             {
                 let mut packet = current_segment.data.borrow_mut();
-                packet.processed = true; 
-                packet.contour_id = contourId;
+                if current_endpoint.1 == SegmentEnd::Left {
+                    packet.left_contour_id = Some(contourId);
+                }
+                else {
+                    packet.right_contour_id = Some(contourId);
+                }
                 packet.result_in_out = current_endpoint.1 == SegmentEnd::Right;
             }
 
@@ -1420,8 +1551,80 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             println!("... #{} {:?}", current_endpoint.0.index, current_endpoint.point());
         }
 
+        final_polygon.contours.push(contour);
+        depth.push(0);
+        holeOf.push(None);
+
+        // FIXME if we go *clockwise* here (because we're tracing a hole), then the segment
+        // below us is the first segment of the equivalent *counterclockwise* shape (which
+        // we'll never trace because we eliminated it), so we need to actually use the segment
+        // below *that* to figure out what we're inside.  also, the winding will be wrong,
+        // because we call changeOrientation below assuming that everything is ccw!
+        // TODO maybe everything should just be counterclockwise?  but then how do i track
+        // whether i'm "inside" or "outside"?
+        // XXX can this happen for two-sided lines as well?
+        let &SweepEndpoint(segment, end) = if final_polygon[contourId].clockwise() {
+            current_endpoint
+        }
+        else {
+            endpoint
+        };
+
+        // TODO wait, how much does this resemble the hole-finding stuff in Polygon?
+        // Check for a hole inside another contour, or an island inside another hole.
+        // Note that we should've already traced the segment below this one, if any, since we're
+        // tracing in order from bottom to top.
+        println!("checking containment");
+        if end == SegmentEnd::Left && ! segment.is_one_sided() {
+            // This is the left/upper side of a two-sided segment, so it must be a neighbor of the
+            // contour on our right side, which has already been traced.
+            let neighbor_contour_id = segment.data.borrow().right_contour_id.unwrap();
+            println!("...it's the left side of a two-sided line, so it's the neighbor of the other side, contour {:?}", neighbor_contour_id);
+            holeOf[contourId] = holeOf[neighbor_contour_id];
+            depth[contourId] = depth[neighbor_contour_id];
+            if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
+                final_polygon[parent_contour_id].addHole(contourId);
+                final_polygon.contours[contourId].setExternal(false);
+            }
+        }
+        // XXX: if this is the right side, there MUST be a below
+        else if let Some(below_segment_id) = segment.data.borrow().below_in_result {
+            println!("...it's got a below, #{}, so something must be going on here", below_segment_id);
+            // This is either the right/lower side of a two-sided segment, or the only side of a
+            // one-sided segment.  Either way, its containment is determined by the segment below.
+            // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
+            let below_segment = &segment_order[below_segment_id];
+            
+            // If this is the left side (of a one-sided segment) and the segment below it is an
+            // island (or a top-level contour), then this is a neighbor.
+            if end == SegmentEnd::Left && depth[below_segment.data.borrow().right_contour_id.unwrap()] % 2 == 0 {
+                // FIXME uggh this is exactly copy-pasted from above
+                // XXX also this was detected in the original code by looking at external()?
+                let neighbor_contour_id = below_segment.data.borrow().right_contour_id.unwrap();
+                println!("...ah, a neighbor of contour {:?}", neighbor_contour_id);
+                holeOf[contourId] = holeOf[neighbor_contour_id];
+                depth[contourId] = depth[neighbor_contour_id];
+                if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
+                    final_polygon[parent_contour_id].addHole(contourId);
+                    final_polygon.contours[contourId].setExternal(false);
+                }
+            }
+            // Otherwise, it's a hole/lake inside the contour below.
+            else {
+                let below_contour_id = below_segment.data.borrow().left_contour_id.or(below_segment.data.borrow().right_contour_id).unwrap();
+                println!("...ah, it's inside contour {:?}", below_contour_id);
+                final_polygon[below_contour_id].addHole(contourId);
+                holeOf[contourId] = Some(below_contour_id);
+                depth[contourId] = depth[below_contour_id] + 1;
+                final_polygon.contours[contourId].setExternal(false);
+            }
+        }
+        else if end == SegmentEnd::Right {
+            panic!("right/lower side MUST have a lower neighbor!");
+        }
+
         if depth[contourId] & 1 == 1 {
-            contour.changeOrientation();
+            final_polygon[contourId].changeOrientation();
         }
     }
 

@@ -1,6 +1,7 @@
 extern crate byteorder;
 extern crate euclid;
 extern crate typed_arena;
+extern crate bit_vec;
 #[macro_use]
 extern crate nom;
 #[macro_use]

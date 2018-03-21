@@ -52,6 +52,11 @@ impl MapRectX for MapRect {
     }
 }
 
+fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
+    return a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap());
+}
+
+
 #[derive(Debug)]
 struct Segment2 {
     source: MapPoint,
@@ -398,11 +403,14 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
                 || triangle_signed_area(other.point(), other.other_point(), self.other_point()).partial_cmp(&0.).unwrap()
             )
             .then_with(
-                // Collinear!  Fall back to something totally arbitrary
+                // Collinear!  Kind of arbitrary what we do here, but it should be consistent.
                 // NOTE this used to be pol, unsure if this makes any real difference
-                // || self.segment_index.cmp(&other.segment_index)
-                // FIXME oh this is bad
-                || Ordering::Equal
+                // FIXME currently have the problem where there's a collinear split and one of the
+                // pieces ends up changing order in the list, and then we call compute_fields with
+                // the same two pieces in both orders, which is nonsense, so...  make sure this
+                // doesn't change the ordering after a split!  that could be really hard since this
+                // algorithm was designed around mutate-splitting the original...
+                || other.0.index.cmp(&self.0.index)
             );
     }
 }
@@ -749,6 +757,8 @@ struct SegmentPacket {
     // Which original polygons contain this segment?  (The polygon this segment came from is always
     // assumed to contain it; which side faces outwards is determined by up_faces_outwards.)
     in_polygons: BitVec,
+    left_faces_polygons: BitVec,
+    right_faces_polygons: BitVec,
 
     is_in_result: bool,
     // Index of the segment below this one that's actually included in the result
@@ -773,6 +783,8 @@ impl SegmentPacket {
             up_faces_outwards: false,
             is_outside_other_poly: false,
             in_polygons: BitVec::from_elem(npolygons, false),
+            left_faces_polygons: BitVec::from_elem(npolygons, false),
+            right_faces_polygons: BitVec::from_elem(npolygons, false),
 
             is_in_result: false,
             below_in_result: None,
@@ -825,21 +837,24 @@ impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
 type BoolSweepSegment = SweepSegment<RefCell<SegmentPacket>>;
 impl BoolSweepSegment {
     fn is_one_sided(&self) -> bool {
-        return self.data.borrow().in_polygons.none();
+        let packet = self.data.borrow();
+        return packet.left_faces_polygons.none() || packet.right_faces_polygons.none();
     }
 }
 
 /** @brief compute several fields of left event le */
 fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
     // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
+    println!("@@@ computing fields for #{}, with below {:?}", segment.index, maybe_below.map(|x| x.index));
     {
         let mut packet = segment.data.borrow_mut();
+        let polygon_index = packet.polygon_index;
 
         // Compute up_faces_outwards and is_outside_other_poly, the fields that tell us which
         // segments to include in the final polygon
         if let Some(below) = maybe_below {
             let below_packet = below.data.borrow();
-            if packet.polygon_index == below_packet.polygon_index {
+            if polygon_index == below_packet.polygon_index {
                 // below line segment in sl belongs to the same polygon that "se" belongs to
                 packet.up_faces_outwards = ! below_packet.up_faces_outwards;
                 packet.is_outside_other_poly = below_packet.is_outside_other_poly;
@@ -851,7 +866,7 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             }
             else {
                 // below line segment in sl belongs to a different polygon that "se" belongs to
-                packet.up_faces_outwards = ! below_packet.is_outside_other_poly;
+                packet.up_faces_outwards = below_packet.left_faces_polygons[polygon_index];
                 if below.vertical() {
                     packet.is_outside_other_poly = ! below_packet.up_faces_outwards;
                 }
@@ -865,12 +880,28 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
                 packet.in_polygons.union(&below_packet.in_polygons);
                 let is_outside = packet.is_outside_other_poly;
                 packet.in_polygons.set(below_packet.polygon_index, ! is_outside);
-                let polygon_index = packet.polygon_index;
                 packet.in_polygons.set(polygon_index, false);
             }
 
+            // Our lower (right) side faces the same space as the below line's upper (left) side,
+            // UNLESS the below line coincides with us, in which case we face the same space as its
+            // lower side.
+            packet.left_faces_polygons.clear();
+            packet.right_faces_polygons.clear();
+            if below_packet.edge_type == EdgeType::NonContributing {
+                packet.left_faces_polygons.union(&below_packet.left_faces_polygons);
+                packet.right_faces_polygons.union(&below_packet.right_faces_polygons);
+            }
+            else {
+                packet.left_faces_polygons.union(&below_packet.left_faces_polygons);
+                packet.right_faces_polygons.union(&below_packet.left_faces_polygons);
+            }
+            // Left/up is the same, except that it adds or removes this poly
+            let up_faces_outwards = packet.up_faces_outwards;
+            packet.left_faces_polygons.set(polygon_index, ! up_faces_outwards);
+
             // compute below_in_result field
-            if below.vertical() || ! is_in_result(operation, below) {
+            if below.vertical() || ! is_in_result(operation, below) || below_packet.edge_type == EdgeType::NonContributing {
                 packet.below_in_result = below_packet.below_in_result;
             }
             else {
@@ -882,9 +913,12 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             packet.is_outside_other_poly = true;
 
             packet.in_polygons.clear();
-            let polygon_index = packet.polygon_index;
-            let is_outside = packet.is_outside_other_poly;
-            //packet.in_polygons.set(polygon_index, is_outside);
+            packet.in_polygons.set(polygon_index, true);
+            // Down/right faces nothing
+            packet.right_faces_polygons.clear();
+            // Left/up faces only this polygon
+            packet.left_faces_polygons.clear();
+            packet.left_faces_polygons.set(polygon_index, true);
         }
     }
 
@@ -964,15 +998,14 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
             // The line segments associated to le1 and le2 overlap
             let left_coincide = seg1.left_point == seg2.left_point;
             let right_coincide = seg1.right_point == seg2.right_point;
-            let left_cmp = Ord::cmp(
-                &SweepEndpoint(seg1, SegmentEnd::Left),
-                &SweepEndpoint(seg2, SegmentEnd::Left));
-            let right_cmp = Ord::cmp(
-                &SweepEndpoint(seg1, SegmentEnd::Right),
-                &SweepEndpoint(seg2, SegmentEnd::Right));
+            let left_cmp = compare_points(seg1.left_point, seg2.left_point);
+            let right_cmp = compare_points(seg1.right_point, seg2.right_point);
 
             if left_coincide {
-                // Segments share a left endpoint, and may even be congruent
+                // Segments share a left endpoint, and may even be congruent.  After this split
+                // they'll definitely coincide, so mark the bottom one as extraneous.
+                // (Note that changes we make to the bottom segment here are inherited into the
+                // left coincident part, not the right part.)
                 let edge_type1 = EdgeType::NonContributing;
                 let edge_type2 = if
                     seg1.data.borrow().up_faces_outwards ==
@@ -991,7 +1024,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 match right_cmp {
                     Ordering::Less =>    return (2, None, Some(seg1.right_point)),
                     Ordering::Greater => return (2, Some(seg2.right_point), None),
-                    Ordering::Equal =>   return (0, None, None),
+                    Ordering::Equal =>   return (2, None, None),
                 }
             }
             else {
@@ -1079,6 +1112,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     }
 
     // Find the closest angle.  That means the biggest dot product, or the smallest, maybe.
+    // TODO should i just use signed triangle area here?
     let mut closest_dot = f32::NAN;
     let mut closest_endpoint = None;
     let mut seen_ccw = false;
@@ -1266,7 +1300,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 // edge_type before splitting (and, TODO, maybe it shouldn't) but the right end
                 // isn't meant to inherit that!
                 let left: &_ = arena.alloc(SweepSegment::new(
-                    seg.left_point, pt, segment_id, seg.data.clone()));
+                    seg.left_point, pt, seg.index, seg.data.clone()));
                 segment_id += 1;
                 let right: &_ = arena.alloc(SweepSegment::new(
                     pt, seg.right_point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index, polygons.len()))));
@@ -1275,10 +1309,19 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                     let mut packet = right.data.borrow_mut();
                     packet.in_polygons.clear();
                     packet.in_polygons.union(&left.data.borrow().in_polygons);
+                    packet.left_faces_polygons.clear();
+                    packet.left_faces_polygons.union(&left.data.borrow().left_faces_polygons);
+                    packet.right_faces_polygons.clear();
+                    packet.right_faces_polygons.union(&left.data.borrow().right_faces_polygons);
                 }
                 segment_id += 1;
 
-                segment_order.push(left);
+                // XXX this is pretty ugly, but it's necessary -- when two segments coincide, the
+                // lower one is marked NonContributing, and that one MUST be sorted lower even
+                // after a split.  currently we break order ties by segment index, so, we gotta
+                // keep the index right
+                segment_order[seg.index] = left;
+                segment_order.push(seg);
                 segment_order.push(right);
                 // We split this segment in half, so replace the existing segment with its left end
                 // and give it a faux right endpoint
@@ -1400,6 +1443,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             segment = _split_segment!(segment, pt);
         }
         if cross.0 == 2 {
+            // XXX might want to enforce that these aren't the same pair twice, since that makes
+            // things...  confusing.  artifact of how we sort and split; see comment in PartialOrd
             compute_fields(operation, maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));
             compute_fields(operation, segment, maybe_below);
         }
@@ -1412,6 +1457,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     {
     let mut svg_swept_group = Group::new();
     for segment in &swept_segments {
+        if segment.data.borrow().edge_type == EdgeType::NonContributing {
+            //continue;
+        }
         svg_swept_group.append(
             Line::new()
             .set("x1", segment.left_point.x)
@@ -1421,15 +1469,19 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             .set("stroke", "green")
             .set("stroke-width", 1)
         );
-        let mut in_polys = Vec::new();
+        let mut left_polys = Vec::new();
+        let mut right_polys = Vec::new();
         for i in 0..polygons.len() {
-            if segment.data.borrow().in_polygons[i] {
-                in_polys.push(i);
+            if segment.data.borrow().left_faces_polygons[i] {
+                left_polys.push(i);
+            }
+            if segment.data.borrow().right_faces_polygons[i] {
+                right_polys.push(i);
             }
         }
         svg_swept_group.append(
             Text::new()
-            .add(svg::node::Text::new(format!("{} {:?}", segment.index, in_polys)))
+            .add(svg::node::Text::new(format!("{} {:?}{:?} up-out:{} out-other:{}", segment.index, left_polys, right_polys, segment.data.borrow().up_faces_outwards, segment.data.borrow().is_outside_other_poly)))
             .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
             .set("y", -(segment.left_point.y + segment.right_point.y) / 2.0)
             .set("fill", "darkgreen")
@@ -1467,6 +1519,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let mut included_segments: Vec<&BoolSweepSegment> = Vec::with_capacity(count);
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
+        if segment.data.borrow().edge_type == EdgeType::NonContributing {
+            continue;
+        }
         if segment.data.borrow().is_in_result || true {
             included_segments.push(segment);
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
@@ -1508,15 +1563,13 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         }
 
         // FIXME maybe do this in previous loop
-        if segment.data.borrow().in_polygons.none() {
-            if end == SegmentEnd::Left && segment.data.borrow().up_faces_outwards {
-                segment.data.borrow_mut().left_processed = true;
-                continue;
-            }
-            else if end == SegmentEnd::Right && ! segment.data.borrow().up_faces_outwards {
-                segment.data.borrow_mut().right_processed = true;
-                continue;
-            }
+        if end == SegmentEnd::Left && segment.data.borrow().left_faces_polygons.none() {
+            segment.data.borrow_mut().left_processed = true;
+            continue;
+        }
+        else if end == SegmentEnd::Right && segment.data.borrow().right_faces_polygons.none() {
+            segment.data.borrow_mut().right_processed = true;
+            continue;
         }
 
         // Walk around looking for a polygon until we come back to the starting point

@@ -556,6 +556,7 @@ named!(hexen_args(&[u8]) -> [u8; 5], do_parse!(
     ([arg0, arg1, arg2, arg3, arg4])
 ));
 
+#[derive(Debug)]
 pub struct BareDoomThing {
     pub x: i16,
     pub y: i16,
@@ -587,6 +588,7 @@ named!(doom_things_lump(&[u8]) -> Vec<BareDoomThing>, terminated!(many0!(do_pars
     (BareDoomThing{ x: x, y: y, angle: angle, doomednum: doomednum, flags: flags })
 )), eof!()));
 
+#[derive(Debug)]
 pub struct BareHexenThing {
     // TODO is this really signed in hexen?
     pub tid: i16,
@@ -650,6 +652,7 @@ impl BareBinaryThing for BareHexenThing {
 // FIXME vertex/sidedef indices are i16 in vanilla, but extended to u16 in most source ports; note that for true vanilla, a negative index makes no sense anyway
 // FIXME hexen extends this, which requires detecting hexen format
 // FIXME what exactly is the higher-level structure that holds actual references to the sidedefs?
+#[derive(Debug)]
 pub struct BareDoomLine {
     pub v0: i16,
     pub v1: i16,
@@ -686,6 +689,7 @@ named!(doom_linedefs_lump(&[u8]) -> Vec<BareDoomLine>, terminated!(many0!(do_par
 )), eof!()));
 
 // TODO source ports extended ids to unsigned here too
+#[derive(Debug)]
 pub struct BareHexenLine {
     pub v0: i16,
     pub v1: i16,
@@ -744,6 +748,7 @@ impl BareBinaryLine for BareHexenLine {
     }
 }
 
+#[derive(Debug)]
 pub struct BareSide<'a> {
     pub x_offset: i16,
     pub y_offset: i16,
@@ -836,6 +841,7 @@ named!(vertexes_lump<&[u8], Vec<BareVertex>>, terminated!(many0!(do_parse!(
 
 
 
+#[derive(Debug)]
 pub struct BareSector<'a> {
     pub floor_height: i16,
     pub ceiling_height: i16,
@@ -885,6 +891,7 @@ named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(
 )), eof!()));
 
 
+#[derive(Debug)]
 pub struct BareBinaryMap<'a, L: BareBinaryLine, T: BareBinaryThing> {
     pub vertices: Vec<BareVertex>,
     pub sectors: Vec<BareSector<'a>>,
@@ -905,6 +912,7 @@ pub type BareDoomMap<'a> = BareBinaryMap<'a, BareDoomLine, BareDoomThing>;
 /// that might make it invalid.
 pub type BareHexenMap<'a> = BareBinaryMap<'a, BareHexenLine, BareHexenThing>;
 
+#[derive(Debug)]
 pub enum BareMap<'a> {
     Doom(BareDoomMap<'a>),
     Hexen(BareHexenMap<'a>),

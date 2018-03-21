@@ -54,6 +54,10 @@ fn run() -> Result<()> {
         (@subcommand shapeops =>
             (about: "test shapeops")
         )
+        (@subcommand route =>
+            (about: "test routefinding")
+            (@arg outfile: +required "Output file")
+        )
     ).get_matches();
 
     // Read input file
@@ -77,6 +81,7 @@ fn run() -> Result<()> {
         ("info", Some(subargs)) /* | (_, None) */ => { do_info(&args, &subargs, &wad)? },
         ("chart", Some(subargs)) => { do_chart(&args, &subargs, &wad)? },
         ("shapeops", Some(subargs)) => { do_shapeops()? },
+        ("route", Some(subargs)) => { do_route(&args, &subargs, &wad)? },
         _ => { println!("????"); /* TODO bogus */ },
     }
 
@@ -450,10 +455,11 @@ use idchoppers::shapeops::MapPoint;
 fn do_shapeops() -> Result<()> {
     let mut poly1 = idchoppers::shapeops::Polygon::new();
     for points in [
-        [(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
+        [(0., 0.), (0., 64.), (32., 64.), (32., 0.)],
+        //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
         //[(16., 16.), (16., 48.), (48., 48.), (48., 16.)],
-        [(8., 8.), (8., 56.), (56., 56.), (56., 8.)],
-        [(24., 24.), (24., 40.), (40., 40.), (40., 24.)],
+        //[(8., 8.), (8., 56.), (56., 56.), (56., 8.)],
+        //[(24., 24.), (24., 40.), (40., 40.), (40., 24.)],
         //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
         //[(0., 32.), (0., 96.), (64., 96.), (64., 32.)],
     ].iter() {
@@ -470,7 +476,9 @@ fn do_shapeops() -> Result<()> {
     for points in [
         //[(32., 32.), (32., 80.), (80., 32.)],
         // [(56., 32.), (56., 80.), (104., 32.)],
-        [(32., 32.), (32., 48.), (48., 48.), (48., 32.)],
+        //[(32., 32.), (32., 48.), (48., 48.), (48., 32.)],
+        //[(32., 0.), (32., 64.), (64., 64.), (64., 0.)],
+        [(0., 0.), (0., 32.), (64., 32.), (64., 0.)],
         //[(64., 32.), (64., 96.), (128., 96.), (128., 32.)],
         //[(64., 0.), (64., 64.), (128., 64.), (128., 0.)],
     ].iter() {
@@ -529,4 +537,132 @@ fn do_shapeops() -> Result<()> {
     svg::save("idchoppers-shapeops.svg", &doc);
 
     return Ok(());
+}
+
+
+fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+    for map_range in wad.iter_maps() {
+        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        match bare_map {
+            // TODO interesting diagnostic: mix of map formats in the same wad
+            idchoppers::BareMap::Doom(map) => {
+                let doc = route_map_as_svg(&map);
+                svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
+                break;
+            }
+            idchoppers::BareMap::Hexen(map) => {
+                let doc = route_map_as_svg(&map);
+                svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing>(map: &idchoppers::BareBinaryMap<L, T>) -> Document {
+    let mut group = Group::new();
+    let mut minx;
+    let mut miny;
+    if let Some(vertex) = map.vertices.first() {
+        minx = vertex.x;
+        miny = vertex.y;
+    }
+    else if let Some(thing) = map.things.first() {
+        let (x, y) = thing.coords();
+        minx = x;
+        miny = y;
+    }
+    else {
+        minx = 0;
+        miny = 0;
+    }
+    let mut maxx = minx;
+    let mut maxy = miny;
+
+    for vertex in map.vertices.iter() {
+        if vertex.x < minx {
+            minx = vertex.x;
+        }
+        if vertex.x > maxx {
+            maxx = vertex.x;
+        }
+        if vertex.y < miny {
+            miny = vertex.y;
+        }
+        if vertex.y > maxy {
+            maxy = vertex.y;
+        }
+    }
+
+    let mut polygons = Vec::with_capacity(map.lines.len());
+    for line in map.lines.iter() {
+        let mut polygon = idchoppers::shapeops::Polygon::new();
+        let mut contour = idchoppers::shapeops::Contour::new();
+
+        let (v0i, v1i) = line.vertex_indices();
+        let v0 = &map.vertices[v0i as usize];
+        let v1 = &map.vertices[v1i as usize];
+        let radius = 15;
+        // Always start with the top vertex.  The player is always a square AABB, which yields
+        // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
+        // as well the same ways, albeit with an extra vertex.)
+        let top;
+        let bottom;
+        if v0.y > v1.y {
+            top = v0;
+            bottom = v1;
+        }
+        else {
+            top = v1;
+            bottom = v0;
+        }
+        let Pt = |x, y| MapPoint::new(x as f32, y as f32);
+        if top.x < bottom.x {
+            // Down and to the right: start with the bottom-left corner of the top box
+            contour.points = vec![
+                Pt(top.x - radius, top.y - radius),
+                Pt(top.x - radius, top.y + radius),
+                Pt(top.x + radius, top.y + radius),
+                Pt(bottom.x + radius, bottom.y + radius),
+                Pt(bottom.x + radius, bottom.y - radius),
+                Pt(bottom.x - radius, bottom.y - radius),
+            ];
+        }
+        else {
+            // Down and to the left: start with the top-left corner of the top box
+            contour.points = vec![
+                Pt(top.x - radius, top.y + radius),
+                Pt(top.x + radius, top.y + radius),
+                Pt(top.x + radius, top.y - radius),
+                Pt(bottom.x + radius, bottom.y - radius),
+                Pt(bottom.x - radius, bottom.y - radius),
+                Pt(bottom.x - radius, bottom.y + radius),
+            ];
+        }
+        polygon.contours.push(contour);
+        polygons.push(polygon);
+    }
+
+    let result = idchoppers::shapeops::compute(&polygons, idchoppers::shapeops::BooleanOpType::Union);
+    for (i, contour) in result.contours.iter().enumerate() {
+        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
+        let mut data = Data::new();
+        let point = contour.points.last().unwrap();
+        data = data.move_to((point.x, point.y));
+        for point in &contour.points {
+            data = data.line_to((point.x, point.y));
+        }
+        group.append(Path::new().set("d", data));
+    }
+
+    // Doom's y-axis points up, but SVG's points down.  Rather than mucking with coordinates
+    // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
+    // the <svg> element, hence the need for this group.)
+    group.assign("transform", "scale(1 -1)");
+    return Document::new()
+        .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
+        .add(Style::new(include_str!("map-svg.css")))
+        .add(group);
 }

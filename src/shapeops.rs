@@ -991,7 +991,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 match right_cmp {
                     Ordering::Less =>    return (2, None, Some(seg1.right_point)),
                     Ordering::Greater => return (2, Some(seg2.right_point), None),
-                    Ordering::Equal =>   unreachable!(),
+                    Ordering::Equal =>   return (0, None, None),
                 }
             }
             else {
@@ -1464,7 +1464,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     // copy the events in the result polygon to included_points array
     // XXX since otherEvent is still kosher, i don't think this is a copy!
     let count = swept_segments.len();
-    let mut included_segments = Vec::with_capacity(count);
+    let mut included_segments: Vec<&BoolSweepSegment> = Vec::with_capacity(count);
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
         if segment.data.borrow().is_in_result || true {

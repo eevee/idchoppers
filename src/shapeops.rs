@@ -336,7 +336,7 @@ impl<T> cmp::Ord for SweepSegment<T> {
         }
 
         // has the segment associated to e1 been sorted in evp before the segment associated to e2?
-        if SweepEndpoint(other, SegmentEnd::Left) < SweepEndpoint(self, SegmentEnd::Left) {
+        if SweepEndpoint(self, SegmentEnd::Left) < SweepEndpoint(other, SegmentEnd::Left) {
             if self.below(other.left_point) {
                 return Ordering::Less;
             }

@@ -771,7 +771,6 @@ struct SegmentPacket {
     is_outside_other_poly: bool,
     // Which original polygons contain this segment?  (The polygon this segment came from is always
     // assumed to contain it; which side faces outwards is determined by up_faces_outwards.)
-    in_polygons: BitVec,
     left_faces_polygons: BitVec,
     right_faces_polygons: BitVec,
 
@@ -797,7 +796,6 @@ impl SegmentPacket {
             edge_type: EdgeType::Normal,
             up_faces_outwards: false,
             is_outside_other_poly: false,
-            in_polygons: BitVec::from_elem(npolygons, false),
             left_faces_polygons: BitVec::from_elem(npolygons, false),
             right_faces_polygons: BitVec::from_elem(npolygons, false),
 
@@ -873,11 +871,6 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
                 // below line segment in sl belongs to the same polygon that "se" belongs to
                 packet.up_faces_outwards = ! below_packet.up_faces_outwards;
                 packet.is_outside_other_poly = below_packet.is_outside_other_poly;
-
-                // This doesn't change containment at all
-                // TODO hmm well this is ugly, and /possibly/ unnecessary
-                packet.in_polygons.clear();
-                packet.in_polygons.union(&below_packet.in_polygons);
             }
             else {
                 // below line segment in sl belongs to a different polygon that "se" belongs to
@@ -888,14 +881,6 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
                 else {
                     packet.is_outside_other_poly = below_packet.up_faces_outwards;
                 }
-
-                // The other polygon should either be added or removed, depending on which way the
-                // below segment faces
-                packet.in_polygons.clear();
-                packet.in_polygons.union(&below_packet.in_polygons);
-                let is_outside = packet.is_outside_other_poly;
-                packet.in_polygons.set(below_packet.polygon_index, ! is_outside);
-                packet.in_polygons.set(polygon_index, false);
             }
 
             // Our lower (right) side faces the same space as the below line's upper (left) side,
@@ -927,8 +912,6 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             packet.up_faces_outwards = false;
             packet.is_outside_other_poly = true;
 
-            packet.in_polygons.clear();
-            packet.in_polygons.set(polygon_index, true);
             // Down/right faces nothing
             packet.right_faces_polygons.clear();
             // Left/up faces only this polygon
@@ -1306,8 +1289,6 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 {
                     // TODO ugly ass copy
                     let mut packet = right.data.borrow_mut();
-                    packet.in_polygons.clear();
-                    packet.in_polygons.union(&left.data.borrow().in_polygons);
                     packet.left_faces_polygons.clear();
                     packet.left_faces_polygons.union(&left.data.borrow().left_faces_polygons);
                     packet.right_faces_polygons.clear();

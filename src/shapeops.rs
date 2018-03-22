@@ -227,11 +227,12 @@ struct SweepSegment<T> {
     right_point: MapPoint,
     faces_outwards: bool,
     index: usize,
+    order: usize,
     data: T,
 }
 
 impl<T> SweepSegment<T> {
-    fn new(point0: MapPoint, point1: MapPoint, index: usize, data: T) -> SweepSegment<T> {
+    fn new(point0: MapPoint, point1: MapPoint, index: usize, order: usize, data: T) -> SweepSegment<T> {
         let (left_point, right_point, faces_outwards) = if point0.x < point1.x || (point0.x == point1.x && point0.y < point1.y) {
             (point0, point1, false)
         }
@@ -246,6 +247,7 @@ impl<T> SweepSegment<T> {
             // that seems weird?
             faces_outwards,
             index,
+            order,
             data,
         };
     }
@@ -269,16 +271,6 @@ impl<T> SweepSegment<T> {
     fn segment(&self) -> Segment2 {
         return Segment2::new(self.left_point, self.right_point);
     }
-}
-
-impl<T: Clone> SweepSegment<T> {
-    fn split(&self, midpoint: MapPoint, index1: usize, index2: usize) -> (Self, Self) {
-        return (
-            Self::new(self.left_point, midpoint, index1, self.data.clone()),
-            Self::new(midpoint, self.right_point, index2, self.data.clone()),
-        );
-    }
-
 }
 
 impl<T> cmp::PartialEq for SweepSegment<T> {
@@ -306,10 +298,30 @@ impl<T> cmp::Ord for SweepSegment<T> {
             triangle_signed_area(self.left_point, self.right_point, other.right_point) == 0.
         {
             // Segments are collinear.  Sort by some arbitrary consistent criteria
+            // XXX note that this needs to match the order used in the sweep line!!  i think.
             // XXX this used to be pol, which would cause far more ties...  is this ok?  does
             // "consistent" mean it actually needs to use the sweep comparison?
-            return self.index.cmp(&other.index);
+            return self.order.cmp(&other.order)
+                .then_with(||
+                    if self.left_point == other.left_point {
+                        self.index.cmp(&other.index)
+                    }
+                    else {
+                        Ordering::Equal
+                    }
+                )
+                .then_with(||
+                    SweepEndpoint(other, SegmentEnd::Left).cmp(&SweepEndpoint(self, SegmentEnd::Left))
+                );
                 //.then_with(|| compare_by_sweep(self, other));
+            // FIXME this used to do this, not sure what le1 < le2 does though...
+            // if (le1->pol != le2->pol)
+            //     return le1->pol < le2->pol;
+            // // Just a consistent criterion is used
+            // if (le1->point == le2->point)
+            //     return le1 < le2;
+            // SweepEventComp comp;
+            // return comp (le1, le2);
         }
 
         if self.left_point == other.left_point {
@@ -324,7 +336,7 @@ impl<T> cmp::Ord for SweepSegment<T> {
         }
 
         // has the segment associated to e1 been sorted in evp before the segment associated to e2?
-        if SweepEndpoint(self, SegmentEnd::Left) < SweepEndpoint(other, SegmentEnd::Left) {
+        if SweepEndpoint(other, SegmentEnd::Left) < SweepEndpoint(self, SegmentEnd::Left) {
             if self.below(other.left_point) {
                 return Ordering::Less;
             }
@@ -410,7 +422,8 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
                 // the same two pieces in both orders, which is nonsense, so...  make sure this
                 // doesn't change the ordering after a split!  that could be really hard since this
                 // algorithm was designed around mutate-splitting the original...
-                || other.0.index.cmp(&self.0.index)
+                //|| other.0.index.cmp(&self.0.index)
+                || self.0.order.cmp(&other.0.order)
             );
     }
 }
@@ -424,6 +437,7 @@ pub struct Contour {
     pub points: Vec<MapPoint>,
     /** Holes of the contour. They are stored as the indexes of the holes in a polygon class */
     pub holes: Vec<usize>,
+    pub from_polygons: BitVec,
     // is the contour an external contour? (i.e., is it not a hole?)
     _external: bool,
     _is_clockwise: Cell<Option<bool>>,
@@ -434,6 +448,7 @@ impl Contour {
         return Contour{
             points: Vec::new(),
             holes: Vec::new(),
+            from_polygons: BitVec::new(),
             _external: true,
             _is_clockwise: Cell::new(None),
         };
@@ -635,7 +650,7 @@ impl Polygon {
 
                 let index = segments_mut.len();
                 segments_mut.push(SweepSegment::new(
-                    segment.source, segment.target, index, (contour_id, point_id)));
+                    segment.source, segment.target, index, 0, (contour_id, point_id)));
             }
         }
 
@@ -992,7 +1007,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 println!("seg1: {:?}", seg1);
                 println!("seg2: {:?}", seg2);
                 println!("overlap: {}, {}", a, b);
-                //panic!("Sorry, edges of the same polygon overlap");
+                panic!("Sorry, edges of the same polygon overlap");
             }
 
             // The line segments associated to le1 and le2 overlap
@@ -1016,7 +1031,9 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 {
                     println!("due to split, setting #{} to {:?} and #{} to {:?}", seg1.index, edge_type1, seg2.index, edge_type2);
                     seg1.data.borrow_mut().edge_type = edge_type1;
-                    seg2.data.borrow_mut().edge_type = edge_type2;
+                    if seg2.data.borrow().edge_type != EdgeType::NonContributing {
+                        seg2.data.borrow_mut().edge_type = edge_type2;
+                    }
                 }
 
                 // If the right endpoints don't coincide, then one lies on the other segment
@@ -1157,7 +1174,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
                 }
             }
 
-            if closest_endpoint.is_none() || (this_ccw && dot > closest_dot) || (!this_ccw && dot < closest_dot) {
+            if closest_endpoint.is_none() || (this_ccw && dot < closest_dot) || (!this_ccw && dot > closest_dot) {
                 closest_dot = dot;
                 closest_endpoint = Some(endpoint);
             }
@@ -1243,7 +1260,6 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let arena = Arena::new();
     let mut endpoint_queue = BinaryHeap::new();
     let mut segment_id = 0;
-    let mut svg_orig_group = Group::new();
     // TODO could reserve space here and elsewhere
     let mut segment_order = Vec::new();
     for (i, polygon) in polygons.iter().enumerate() {
@@ -1252,29 +1268,11 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
                     return;          // This can be done as preprocessing to avoid "polygons" with less than 3 edges */
                 let segment: &_ = arena.alloc(SweepSegment::new(
-                    seg.source, seg.target, segment_id, RefCell::new(SegmentPacket::new(i, polygons.len()))));
+                    seg.source, seg.target, segment_id, i, RefCell::new(SegmentPacket::new(i, polygons.len()))));
                 segment_id += 1;
                 segment_order.push(segment);
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Right)));
-                svg_orig_group.append(
-                    Line::new()
-                    .set("x1", seg.source.x)
-                    .set("y1", -seg.source.y)
-                    .set("x2", seg.target.x)
-                    .set("y2", -seg.target.y)
-                    .set("stroke", if i == 0 { "#aaa" } else { "#ddd" })
-                    .set("stroke-width", 1)
-                );
-                svg_orig_group.append(
-                    Text::new()
-                    .add(svg::node::Text::new(format!("{}", segment_id - 1)))
-                    .set("x", (seg.source.x + seg.target.x) / 2.0)
-                    .set("y", -(seg.source.y + seg.target.y) / 2.0)
-                    .set("text-anchor", "middle")
-                    .set("alignment-baseline", "central")
-                    .set("font-size", 8)
-                );
             }
         }
     }
@@ -1299,11 +1297,12 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 // This is important since handle_intersections assigns the whole segment's
                 // edge_type before splitting (and, TODO, maybe it shouldn't) but the right end
                 // isn't meant to inherit that!
+                let polygon_index = seg.data.borrow().polygon_index;
                 let left: &_ = arena.alloc(SweepSegment::new(
-                    seg.left_point, pt, seg.index, seg.data.clone()));
+                    seg.left_point, pt, segment_id, polygon_index, seg.data.clone()));
                 segment_id += 1;
                 let right: &_ = arena.alloc(SweepSegment::new(
-                    pt, seg.right_point, segment_id, RefCell::new(SegmentPacket::new(seg.data.borrow().polygon_index, polygons.len()))));
+                    pt, seg.right_point, segment_id, polygon_index, RefCell::new(SegmentPacket::new(polygon_index, polygons.len()))));
                 {
                     // TODO ugly ass copy
                     let mut packet = right.data.borrow_mut();
@@ -1320,11 +1319,13 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 // lower one is marked NonContributing, and that one MUST be sorted lower even
                 // after a split.  currently we break order ties by segment index, so, we gotta
                 // keep the index right
-                segment_order[seg.index] = left;
-                segment_order.push(seg);
+                //segment_order[seg.index] = left;
+                //segment_order.push(seg);
+                segment_order.push(left);
                 segment_order.push(right);
                 // We split this segment in half, so replace the existing segment with its left end
                 // and give it a faux right endpoint
+                // TODO maybe worth asserting it was actually removed here
                 active_segments.remove(&seg);
                 active_segments.insert(left);
                 endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
@@ -1481,10 +1482,10 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         }
         svg_swept_group.append(
             Text::new()
-            .add(svg::node::Text::new(format!("{} {:?}{:?} up-out:{} out-other:{}", segment.index, left_polys, right_polys, segment.data.borrow().up_faces_outwards, segment.data.borrow().is_outside_other_poly)))
+            .add(svg::node::Text::new(format!("{} {:?}{:?}", segment.index, left_polys, right_polys)))
             .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
             .set("y", -(segment.left_point.y + segment.right_point.y) / 2.0)
-            .set("fill", "darkgreen")
+            .set("fill", if segment.data.borrow().edge_type == EdgeType::NonContributing { "lightgreen" } else {"darkgreen" })
             .set("text-anchor", "middle")
             .set("alignment-baseline", "central")
             .set("font-size", 4)
@@ -1505,7 +1506,6 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let doc = Document::new()
         .set("viewBox", (-16, -112, 128, 128))
         .add(Style::new("line:hover { stroke: gold; }"))
-        .add(svg_orig_group)
         .add(svg_swept_group)
         .add(svg_active_group)
     ;
@@ -1576,13 +1576,16 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         let mut contour = Contour::new();
         let contourId = final_polygon.contours.len();
         let starting_point = segment.left_point;
+        contour.from_polygons = match end {
+            SegmentEnd::Left => segment.data.borrow().left_faces_polygons.clone(),
+            SegmentEnd::Right => segment.data.borrow().right_faces_polygons.clone(),
+        };
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
         println!("building a contour from #{} {:?} {:?}", segment.index, end, starting_point);
         loop {
             current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
-            println!(" -> from polygon {}, others {:?}", current_segment.data.borrow().polygon_index, current_segment.data.borrow().in_polygons);
             {
                 let mut packet = current_segment.data.borrow_mut();
                 if current_endpoint.1 == SegmentEnd::Left {

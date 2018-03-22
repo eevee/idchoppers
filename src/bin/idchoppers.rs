@@ -596,7 +596,20 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         }
     }
 
-    let mut polygons = Vec::with_capacity(map.lines.len());
+    let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
+    //let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
+
+    for (s, sector) in map.sectors.iter().enumerate() {
+        let mut polygon = idchoppers::shapeops::Polygon::new();
+        for points in map.sector_to_polygons(s).iter() {
+            println!("{} {:?}", s, points);
+            let mut contour = idchoppers::shapeops::Contour::new();
+            contour.points = points.iter().map(|p| MapPoint::new(p.x as f32, p.y as f32)).collect();
+            polygon.contours.push(contour);
+        }
+        polygons.push(polygon);
+    }
+
     for line in map.lines.iter() {
         let mut polygon = idchoppers::shapeops::Polygon::new();
         let mut contour = idchoppers::shapeops::Contour::new();
@@ -604,7 +617,7 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         let (v0i, v1i) = line.vertex_indices();
         let v0 = &map.vertices[v0i as usize];
         let v1 = &map.vertices[v1i as usize];
-        let radius = 15;
+        let radius = 16;
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
         // as well the same ways, albeit with an extra vertex.)

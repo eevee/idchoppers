@@ -1009,6 +1009,11 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
         // TODO linear scan -- would make more sense to turn the entire map into polygons in one go
         for line in self.lines.iter() {
             let (frontid, backid) = line.side_indices();
+            // FIXME need to do this better
+            if frontid != -1 && backid != -1 && self.sides[frontid as usize].sector == self.sides[backid as usize].sector {
+                continue;
+            }
+
             for &(facing, sideid) in [(Facing::Front, frontid), (Facing::Back, backid)].iter() {
                 if sideid == -1 {
                     continue;
@@ -1078,11 +1083,9 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
                         }
                         edge.done = true;
                         if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
-                            outline.push(edge.v0);
                             next_vertices.push(edge.v0);
                         }
                         else if !seen_vertices.contains_key(&VertexRef(edge.v1)) {
-                            outline.push(edge.v1);
                             next_vertices.push(edge.v1);
                         }
                         // Only add EXACTLY ONE vertex at a time for now -- so, assuming simple

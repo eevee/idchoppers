@@ -604,7 +604,7 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         for points in map.sector_to_polygons(s).iter() {
             println!("{} {:?}", s, points);
             let mut contour = idchoppers::shapeops::Contour::new();
-            contour.points = points.iter().map(|p| MapPoint::new(p.x as f32, p.y as f32)).collect();
+            contour.points = points.iter().map(|p| MapPoint::new(p.x as f64, p.y as f64)).collect();
             polygon.contours.push(contour);
         }
         polygons.push(polygon);
@@ -631,7 +631,7 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
             top = v1;
             bottom = v0;
         }
-        let Pt = |x, y| MapPoint::new(x as f32, y as f32);
+        let Pt = |x, y| MapPoint::new(x as f64, y as f64);
         if top.x < bottom.x {
             // Down and to the right: start with the bottom-left corner of the top box
             contour.points = vec![

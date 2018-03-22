@@ -24,7 +24,7 @@ use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use std::f32;
+use std::f64;
 
 
 use bit_vec::BitVec;
@@ -35,9 +35,9 @@ use typed_arena::Arena;
 
 
 pub struct MapSpace;
-pub type MapPoint = TypedPoint2D<f32, MapSpace>;
-pub type MapRect = TypedRect<f32, MapSpace>;
-pub type MapSize = TypedSize2D<f32, MapSpace>;
+pub type MapPoint = TypedPoint2D<f64, MapSpace>;
+pub type MapRect = TypedRect<f64, MapSpace>;
+pub type MapSize = TypedSize2D<f64, MapSpace>;
 // TODO honestly a lot of this could be made generic over TypedPoint2D
 
 trait MapRectX {
@@ -78,7 +78,7 @@ impl Segment2 {
 // utilities
 
 // NOTE: this, and everything else ported from the paper, assumes the y axis points UP
-pub fn triangle_signed_area(a: MapPoint, b: MapPoint, c: MapPoint) -> f32 {
+pub fn triangle_signed_area(a: MapPoint, b: MapPoint, c: MapPoint) -> f64 {
     return (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
 }
 
@@ -103,7 +103,7 @@ fn triangle_contains_point(s: Segment2, o: MapPoint, p: MapPoint) -> bool {
 }
 */
 
-fn check_span_overlap(u0: f32, u1: f32, v0: f32, v1: f32) -> Option<(f32, f32)> {
+fn check_span_overlap(u0: f64, u1: f64, v0: f64, v1: f64) -> Option<(f64, f64)> {
     if u1 < v0 || u0 > v1 {
         return None;
     }
@@ -128,8 +128,8 @@ enum SegmentIntersection {
     Segment(MapPoint, MapPoint),
 }
 
-const sqrEpsilon: f32 = 0.0000001;
-const EPSILON: f32 = 0.000000000000001;
+const sqrEpsilon: f64 = 0.0000001;
+const EPSILON: f64 = 0.000000000000001;
 fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
     let p0 = seg0.source;
     let d0 = seg0.target - p0;
@@ -294,8 +294,8 @@ impl<T> cmp::Ord for SweepSegment<T> {
             return Ordering::Equal;
         }
 
-        if triangle_signed_area(self.left_point, self.right_point, other.left_point) == 0. &&
-            triangle_signed_area(self.left_point, self.right_point, other.right_point) == 0.
+        if triangle_signed_area(self.left_point, self.right_point, other.left_point).abs() < 0.001 &&
+            triangle_signed_area(self.left_point, self.right_point, other.right_point).abs() < 0.001
         {
             // Segments are collinear.  Sort by some arbitrary consistent criteria
             // XXX note that this needs to match the order used in the sweep line!!  i think.
@@ -463,10 +463,10 @@ impl Contour {
         let mut min_y = self.points[0].y;
         let mut max_y = min_y;
         for point in self.points.iter().skip(1) {
-            min_x = f32::min(min_x, point.x);
-            max_x = f32::max(max_x, point.x);
-            min_y = f32::min(min_y, point.y);
-            max_y = f32::max(max_y, point.y);
+            min_x = f64::min(min_x, point.x);
+            max_x = f64::max(max_x, point.x);
+            min_y = f64::min(min_y, point.y);
+            max_y = f64::max(max_y, point.y);
         }
         return MapRect::new(MapPoint::new(min_x, min_y), MapSize::new(max_x - min_x, max_y - min_y));
     }
@@ -490,7 +490,7 @@ impl Contour {
         return ! self.clockwise();
     }
 
-    fn move_by(&mut self, dx: f32, dy: f32) {
+    fn move_by(&mut self, dx: f64, dy: f64) {
         for point in self.points.iter_mut() {
             *point = MapPoint::new(point.x + dx, point.y + dy);
         }
@@ -623,7 +623,7 @@ impl Polygon {
         return bbox;
     }
 
-    fn move_by(&mut self, dx: f32, dy: f32) {
+    fn move_by(&mut self, dx: f64, dy: f64) {
         for contour in self.contours.iter_mut() {
             contour.move_by(dx, dy);
         }
@@ -1113,7 +1113,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
 
     // Find the closest angle.  That means the biggest dot product, or the smallest, maybe.
     // TODO should i just use signed triangle area here?
-    let mut closest_dot = f32::NAN;
+    let mut closest_dot = f64::NAN;
     let mut closest_endpoint = None;
     let mut seen_ccw = false;
     let current_vec = next_point - current_endpoint.point();
@@ -1201,7 +1201,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
      * polygons and no fixed operations
     let subjectBB = subject.bbox();     // for optimizations 1 and 2
     let clippingBB = clipping.bbox();   // for optimizations 1 and 2
-    let MINMAXX = f32::min(subjectBB.max_x(), clippingBB.max_x()); // for optimization 2
+    let MINMAXX = f64::min(subjectBB.max_x(), clippingBB.max_x()); // for optimization 2
 
     if subject.contours.is_empty() || clipping.contours.is_empty() {
         // At least one of the polygons is empty
@@ -1307,7 +1307,12 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 // We split this segment in half, so replace the existing segment with its left end
                 // and give it a faux right endpoint
                 // TODO maybe worth asserting it was actually removed here
-                active_segments.remove(&seg);
+                if ! active_segments.remove(&seg) {
+                    println!("!!! oh no, can't find segment #{}", seg.index);
+                    for s in &active_segments {
+                        println!("  vs #{}: {:?}, {}, {}", s.index, seg.cmp(&s), triangle_signed_area(seg.left_point, seg.right_point, s.left_point), triangle_signed_area(seg.left_point, seg.right_point, s.right_point));
+                    }
+                }
                 active_segments.insert(left);
                 endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Left)));

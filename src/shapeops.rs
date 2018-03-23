@@ -31,6 +31,9 @@ use euclid::TypedSize2D;
 use typed_arena::Arena;
 
 
+const SPEW: bool = false;
+
+
 pub struct MapSpace;
 pub type MapPoint = TypedPoint2D<f64, MapSpace>;
 pub type MapRect = TypedRect<f64, MapSpace>;
@@ -1361,10 +1364,12 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             Some(item) => item,
             None => break,
         };
-        println!("");
-        println!("LOOP ITERATION: {:?} of #{:?}[{}] {:?} -> {:?}", end, segment.index, segment.order, segment.left_point, segment.right_point);
-        for seg in &active_segments {
-            println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
+        if SPEW {
+            println!("");
+            println!("LOOP ITERATION: {:?} of #{:?}[{}] {:?} -> {:?}", end, segment.index, segment.order, segment.left_point, segment.right_point);
+            for seg in &active_segments {
+                println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
+            }
         }
         let endpoint = match end {
             SegmentEnd::Left => segment.left_point,
@@ -1522,15 +1527,17 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     included_segments.sort();
     included_endpoints.sort();
 
-    println!();
-    println!("-- segments --");
-    for seg in &included_segments {
-        println!("{:?}", seg);
-    }
-    println!();
-    println!("-- endpoints --");
-    for ep in &included_endpoints {
-        println!("{:?} of #{} {:?} -> {:?}", ep.1, ep.0.index, ep.0.left_point, ep.0.right_point);
+    if SPEW {
+        println!();
+        println!("-- segments --");
+        for seg in &included_segments {
+            println!("{:?}", seg);
+        }
+        println!();
+        println!("-- endpoints --");
+        for ep in &included_endpoints {
+            println!("{:?} of #{} {:?} -> {:?}", ep.1, ep.0.index, ep.0.left_point, ep.0.right_point);
+        }
     }
 
     for (i, &SweepEndpoint(segment, end)) in included_endpoints.iter().enumerate() {

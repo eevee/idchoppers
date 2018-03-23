@@ -16,13 +16,10 @@ use std::cmp::Ordering;
 use std::cmp::Reverse;
 use std::collections::BTreeSet;
 use std::collections::BinaryHeap;
-use std::collections::LinkedList;
 use std::ops;
-use std::mem::transmute;
 
 use std::cell::Cell;
 use std::cell::RefCell;
-use std::rc::Rc;
 
 use std::f64;
 
@@ -82,27 +79,6 @@ pub fn triangle_signed_area(a: MapPoint, b: MapPoint, c: MapPoint) -> f64 {
     return (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
 }
 
-/** Sign of triangle (p1, p2, o) */
-/*
-fn triangle_sign(p1: MapPoint, p2: MapPoint, o: MapPoint) -> i8 {
-    let det = (p1.x - o.x) * (p2.y - o.y) - (p2.x - o.x) * (p1.y - o.y);
-    if det < 0. {
-        return -1;
-    }
-    else if det > 0. {
-        return 1;
-    }
-    else {
-        return 0;
-    }
-}
-
-fn triangle_contains_point(s: Segment2, o: MapPoint, p: MapPoint) -> bool {
-    let x = triangle_sign(s.source, s.target, p);
-    return (x == triangle_sign(s.target, o, p)) && (x == triangle_sign(o, s.source, p));
-}
-*/
-
 fn check_span_overlap(u0: f64, u1: f64, v0: f64, v1: f64) -> Option<(f64, f64)> {
     if u1 < v0 || u0 > v1 {
         return None;
@@ -128,25 +104,25 @@ enum SegmentIntersection {
     Segment(MapPoint, MapPoint),
 }
 
-const sqrEpsilon: f64 = 0.0000001;
+const SQR_EPSILON: f64 = 0.0000001;
 const EPSILON: f64 = 0.000000000000001;
 fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
     let p0 = seg0.source;
     let d0 = seg0.target - p0;
     let p1 = seg1.source;
     let d1 = seg1.target - p1;
-    let E = p1 - p0;
+    let sep = p1 - p0;
     let kross = d0.cross(d1);
-    let sqrLen0 = d0.square_length();
-    let sqrLen1 = d1.square_length();
+    let d0len2 = d0.square_length();
+    let d1len2 = d1.square_length();
 
-    if kross * kross > sqrEpsilon * sqrLen0 * sqrLen1 {
+    if kross * kross > SQR_EPSILON * d0len2 * d1len2 {
         // Lines containing these segments intersect; check whether the segments themselves do
-        let s = E.cross(d1) / kross;
+        let s = sep.cross(d1) / kross;
         if s < 0. || s > 1. {
             return SegmentIntersection::None;
         }
-        let t = E.cross(d0) / kross;
+        let t = sep.cross(d0) / kross;
         if t < 0. || t > 1. {
             return SegmentIntersection::None;
         }
@@ -177,16 +153,15 @@ fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
     }
 
     // Segments are parallel; check if they're collinear
-    let sqrLenE = E.square_length();
-    let kross = E.cross(d0);
-    if kross * kross > sqrEpsilon * sqrLen0 * sqrLenE {
+    let kross = sep.cross(d0);
+    if kross * kross > SQR_EPSILON * d0len2 * sep.square_length() {
         // Nope, no intersection
         return SegmentIntersection::None;
     }
 
     // Segments are collinear; check whether their endpoints overlap
-    let s0 = d0.dot(E) / sqrLen0;  // so = Dot (D0, E) * sqrLen0
-    let s1 = s0 + d0.dot(d1) / sqrLen0;  // s1 = s0 + Dot (D0, D1) * sqrLen0
+    let s0 = d0.dot(sep) / d0len2;  // so = Dot (D0, sep) * d0len2
+    let s1 = s0 + d0.dot(d1) / d0len2;  // s1 = s0 + Dot (D0, D1) * d0len2
     let smin = s0.min(s1);
     let smax = s0.max(s1);
     if let Some((begin, end)) = check_span_overlap(0., 1., smin, smax) {
@@ -535,7 +510,7 @@ impl Contour {
         return ret;
     }
 
-    pub fn changeOrientation(&mut self) {
+    pub fn change_orientation(&mut self) {
         self.points.reverse();
         if let Some(cc) = self._is_clockwise.get() {
             self._is_clockwise.set(Some(! cc));
@@ -543,12 +518,12 @@ impl Contour {
     }
     pub fn setClockwise(&mut self) {
         if self.counterclockwise() {
-            self.changeOrientation();
+            self.change_orientation();
         }
     }
     pub fn setCounterClockwise(&mut self) {
         if self.clockwise() {
-            self.changeOrientation();
+            self.change_orientation();
         }
     }
 
@@ -651,7 +626,7 @@ impl Polygon {
     pub fn compute_holes(&mut self) {
         if self.contours.len() < 2 {
             if self.contours.len() == 1 && self.contours[0].clockwise() {
-                self.contours[0].changeOrientation();
+                self.contours[0].change_orientation();
             }
             return;
         }
@@ -1068,6 +1043,8 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                     Ordering::Equal =>   unreachable!(),
                 }
             }
+            // FIXME investigate whether restoring all this (and restoring the double-split case
+            // above) would avoid my goofy near-integer problem?
             /*
             else if right_coincide {
                 // Segments share a right endpoint (and are not congruent), so the left end of
@@ -1203,22 +1180,6 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     else {
         panic!("ran out of endpoints");
     }
-
-    // Hm, well, we didn't find one, so...  go backwards to the next unprocessed segment
-    // period?  This doesn't make a lot of sense to me; are we just assuming we'll hit one that
-    // shares a point?  TODO explicitly check for that perhaps?
-    // XXX i can see it especially failing for degenerate cases where there's only one segment
-    // in a polygon, oof.  though then there should still be two segments actually...?
-    // XXX also this will panic on underflow (good, but maybe needs more explicit error handling)
-    /*
-    let mut i = start_index - 1;
-    while included_endpoints[i].0.data.borrow().processed {
-        i -= 1;
-    }
-    // TODO this might return a bogus point...!  need to check if endpoint.point() == next_point.
-    // it SHOULD work, but i don't know that i can absolutely guarantee it if the input is garbage
-    return &included_endpoints[i];
-    */
 }
 
 // TODO what if i have a slice of polygons, or a vec of &Polygons, or...?
@@ -1645,7 +1606,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         // below us is the first segment of the equivalent *counterclockwise* shape (which
         // we'll never trace because we eliminated it), so we need to actually use the segment
         // below *that* to figure out what we're inside.  also, the winding will be wrong,
-        // because we call changeOrientation below assuming that everything is ccw!
+        // because we call change_orientation below assuming that everything is ccw!
         // TODO maybe everything should just be counterclockwise?  but then how do i track
         // whether i'm "inside" or "outside"?
         // XXX can this happen for two-sided lines as well?
@@ -1717,7 +1678,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         }
 
         if depth[contourId] & 1 == 1 {
-            final_polygon[contourId].changeOrientation();
+            final_polygon[contourId].change_orientation();
         }
     }
 

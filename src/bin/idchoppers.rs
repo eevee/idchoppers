@@ -503,7 +503,16 @@ fn do_shapeops() -> Result<()> {
     }
     */
 
-    let result = idchoppers::shapeops::compute(&vec![poly1, poly2], idchoppers::shapeops::BooleanOpType::Union);
+    let mut poly3 = idchoppers::shapeops::Polygon::new();
+    let mut contour = idchoppers::shapeops::Contour::new();
+    contour.points = vec![
+        MapPoint::new(0., 0.),
+        MapPoint::new(64., 0.),
+        MapPoint::new(64., 32.),
+        MapPoint::new(0., 32.),
+    ];
+    poly3.contours.push(contour);
+    let result = idchoppers::shapeops::compute(&vec![poly1, poly2, poly3], idchoppers::shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
     let mut doc = Document::new()

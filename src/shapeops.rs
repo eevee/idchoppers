@@ -158,6 +158,21 @@ fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
                 intersection = endpoint;
             }
         }
+        // And if that didn't do it, also round almost-integers to integers.  This is extremely
+        // hokey, but it takes care of an edge case I ran into: a not-quite-integral intersection
+        // point was eventually used to split a vertical line perfectly aligned to the grid, so the
+        // resulting lines were no longer vertical, and that changed everything's sort order, and
+        // it was a big huge mess.
+        // TODO maybe do this below too?
+        // TODO i would love a better solution for this, or at least some very simple test cases
+        // (which i could then throw at the original implementation to see what it does?)
+        // TODO consider replacing f64s with rats?
+        if intersection.x.fract().abs() < 1e-9 {
+            intersection.x = intersection.x.round();
+        }
+        if intersection.y.fract().abs() < 1e-9 {
+            intersection.y = intersection.y.round();
+        }
         return SegmentIntersection::Point(intersection);
     }
 
@@ -233,6 +248,10 @@ struct SweepSegment<T> {
 
 impl<T> SweepSegment<T> {
     fn new(point0: MapPoint, point1: MapPoint, index: usize, order: usize, data: T) -> SweepSegment<T> {
+        if point0 == point1 {
+            panic!("Can't create a zero-length segment");
+        }
+
         let (left_point, right_point, faces_outwards) = if point0.x < point1.x || (point0.x == point1.x && point0.y < point1.y) {
             (point0, point1, false)
         }
@@ -254,7 +273,7 @@ impl<T> SweepSegment<T> {
 
     /** Is the line segment (left_point, right_point) below point p */
     fn below(&self, p: MapPoint) -> bool {
-        return triangle_signed_area(self.left_point, self.right_point, p) > 0.;
+        return triangle_signed_area(self.left_point, self.right_point, p) > 0.0000001;
     }
 
     /** Is the line segment (point, other_poin) above point p */
@@ -294,8 +313,8 @@ impl<T> cmp::Ord for SweepSegment<T> {
             return Ordering::Equal;
         }
 
-        if triangle_signed_area(self.left_point, self.right_point, other.left_point).abs() < 0.001 &&
-            triangle_signed_area(self.left_point, self.right_point, other.right_point).abs() < 0.001
+        if triangle_signed_area(self.left_point, self.right_point, other.left_point).abs() < 0.0000001 &&
+            triangle_signed_area(self.left_point, self.right_point, other.right_point).abs() < 0.0000001
         {
             // Segments are collinear.  Sort by some arbitrary consistent criteria
             // XXX note that this needs to match the order used in the sweep line!!  i think.
@@ -858,7 +877,6 @@ impl BoolSweepSegment {
 /** @brief compute several fields of left event le */
 fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
     // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
-    println!("@@@ computing fields for #{}, with below {:?}", segment.index, maybe_below.map(|x| x.index));
     {
         let mut packet = segment.data.borrow_mut();
         let polygon_index = packet.polygon_index;
@@ -919,6 +937,18 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             packet.left_faces_polygons.set(polygon_index, true);
         }
     }
+
+    let mut left_polys = Vec::new();
+    let mut right_polys = Vec::new();
+    for i in 0..segment.data.borrow().left_faces_polygons.len() {
+        if segment.data.borrow().left_faces_polygons[i] {
+            left_polys.push(i);
+        }
+        if segment.data.borrow().right_faces_polygons[i] {
+            right_polys.push(i);
+        }
+    }
+    println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}", segment.index, maybe_below.map(|x| x.index), left_polys, right_polys);
 
     let is_in_result = is_in_result(operation, segment);
     segment.data.borrow_mut().is_in_result = is_in_result;
@@ -1243,9 +1273,11 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let arena = Arena::new();
     let mut endpoint_queue = BinaryHeap::new();
     let mut segment_id = 0;
+    let mut svg_orig_group = Group::new();
     // TODO could reserve space here and elsewhere
     let mut segment_order = Vec::new();
     for (i, polygon) in polygons.iter().enumerate() {
+        let mut data = Data::new();
         for contour in &polygon.contours {
             for seg in contour.iter_segments() {
             /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
@@ -1257,7 +1289,14 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Right)));
             }
+
+            let point = contour.points.last().unwrap();
+            data = data.move_to((point.x, -point.y));
+            for point in &contour.points {
+                data = data.line_to((point.x, -point.y));
+            }
         }
+        svg_orig_group.append(Path::new().set("d", data).set("fill", "#ffcc44").set("fill-opacity", 0.25).set("data-poly-index", i));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1310,8 +1349,12 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 if ! active_segments.remove(&seg) {
                     println!("!!! oh no, can't find segment #{}", seg.index);
                     for s in &active_segments {
-                        println!("  vs #{}: {:?}, {}, {}", s.index, seg.cmp(&s), triangle_signed_area(seg.left_point, seg.right_point, s.left_point), triangle_signed_area(seg.left_point, seg.right_point, s.right_point));
+                        println!("  vs #{}: {:?}, {}, {} | rev {:?}, {}, {}", s.index, seg.cmp(&s),triangle_signed_area(seg.left_point, seg.right_point, s.left_point), triangle_signed_area(seg.left_point, seg.right_point, s.right_point), s.cmp(&seg), triangle_signed_area(s.left_point, s.right_point, seg.left_point), triangle_signed_area(s.left_point, s.right_point, seg.right_point));
                     }
+                    for s in &active_segments {
+                        println!("{:?}", s);
+                    }
+                    panic!("couldn't find a segment that ought to exist");
                 }
                 active_segments.insert(left);
                 endpoint_queue.push(Reverse(SweepEndpoint(left, SegmentEnd::Right)));
@@ -1358,9 +1401,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             None => break,
         };
         println!("");
-        println!("LOOP ITERATION: {:?} of #{:?} {:?} -> {:?}", end, segment.index, segment.left_point, segment.right_point);
+        println!("LOOP ITERATION: {:?} of #{:?}[{}] {:?} -> {:?}", end, segment.index, segment.order, segment.left_point, segment.right_point);
         for seg in &active_segments {
-            println!("  {} #{} {:?} -> {:?}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.left_point, seg.right_point);
+            println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
         }
         let endpoint = match end {
             SegmentEnd::Left => segment.left_point,
@@ -1492,6 +1535,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     let doc = Document::new()
         .set("viewBox", (-16, -112, 128, 128))
         .add(Style::new("line:hover { stroke: gold; }"))
+        .add(svg_orig_group)
         .add(svg_swept_group)
         .add(svg_active_group)
     ;
@@ -1620,13 +1664,20 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         if end == SegmentEnd::Left && ! segment.is_one_sided() {
             // This is the left/upper side of a two-sided segment, so it must be a neighbor of the
             // contour on our right side, which has already been traced.
-            let neighbor_contour_id = segment.data.borrow().right_contour_id.unwrap();
-            println!("...it's the left side of a two-sided line, so it's the neighbor of the other side, contour {:?}", neighbor_contour_id);
-            holeOf[contourId] = holeOf[neighbor_contour_id];
-            depth[contourId] = depth[neighbor_contour_id];
-            if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
-                final_polygon[parent_contour_id].addHole(contourId);
-                final_polygon.contours[contourId].setExternal(false);
+            // FIXME this doesn't work for certain kinds of holes, like the pillars in MAP01, since
+            // we won't trace the hole before the islands inside it...  but i think we can do this
+            // much more simply anyway since there can only really be one level of hole?
+            if let Some(neighbor_contour_id) = segment.data.borrow().right_contour_id {
+                println!("...it's the left side of a two-sided line, so it's the neighbor of the other side, contour {:?}", neighbor_contour_id);
+                holeOf[contourId] = holeOf[neighbor_contour_id];
+                depth[contourId] = depth[neighbor_contour_id];
+                if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
+                    final_polygon[parent_contour_id].addHole(contourId);
+                    final_polygon.contours[contourId].setExternal(false);
+                }
+            }
+            else {
+                println!("XXX lower neighbor of two-sided line hasn't been traced yet!!");
             }
         }
         // XXX: if this is the right side, there MUST be a below

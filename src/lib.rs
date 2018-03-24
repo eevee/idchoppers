@@ -724,6 +724,7 @@ pub trait BareBinaryLine {
     fn vertex_indices(&self) -> (i16, i16);
     fn side_indices(&self) -> (i16, i16);
     fn has_special(&self) -> bool;
+    fn flags(&self) -> i16;
 }
 impl BareBinaryLine for BareDoomLine {
     fn vertex_indices(&self) -> (i16, i16) {
@@ -735,6 +736,9 @@ impl BareBinaryLine for BareDoomLine {
     fn has_special(&self) -> bool {
         self.special != 0
     }
+    fn flags(&self) -> i16 {
+        self.flags
+    }
 }
 impl BareBinaryLine for BareHexenLine {
     fn vertex_indices(&self) -> (i16, i16) {
@@ -745,6 +749,9 @@ impl BareBinaryLine for BareHexenLine {
     }
     fn has_special(&self) -> bool {
         self.special != 0
+    }
+    fn flags(&self) -> i16 {
+        self.flags
     }
 }
 

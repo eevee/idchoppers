@@ -33,6 +33,8 @@ use typed_arena::Arena;
 
 const SPEW: bool = false;
 
+const TEMP_SECTOR_COUNT: usize = 3;
+
 
 pub struct MapSpace;
 pub type MapPoint = TypedPoint2D<f64, MapSpace>;
@@ -435,6 +437,8 @@ pub struct Contour {
     /** Holes of the contour. They are stored as the indexes of the holes in a polygon class */
     pub holes: Vec<usize>,
     pub from_polygons: BitVec,
+    // XXX this is maybe an odd way to go about this
+    pub neighbors: BitVec,
     // is the contour an external contour? (i.e., is it not a hole?)
     _external: bool,
     _is_clockwise: Cell<Option<bool>>,
@@ -446,6 +450,7 @@ impl Contour {
             points: Vec::new(),
             holes: Vec::new(),
             from_polygons: BitVec::new(),
+            neighbors: BitVec::new(),
             _external: true,
             _is_clockwise: Cell::new(None),
         };
@@ -926,7 +931,9 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             right_polys.push(i);
         }
     }
-    println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}", segment.index, maybe_below.map(|x| x.index), left_polys, right_polys);
+    if SPEW {
+        println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}", segment.index, maybe_below.map(|x| x.index), left_polys, right_polys);
+    }
 
     let is_in_result = is_in_result(operation, segment);
     segment.data.borrow_mut().is_in_result = is_in_result;
@@ -1277,7 +1284,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
             {
                 let pt = $pt;
                 let seg = $seg;
-                println!("ah!  splitting #{} at {:?}, into #{} and #{}", seg.index, pt, segment_id, segment_id + 1);
+                if SPEW {
+                    println!("ah!  splitting #{} at {:?}, into #{} and #{}", seg.index, pt, segment_id, segment_id + 1);
+                }
                 // It's not obvious at a glance, but in the original algorithm, the left end of a
                 // split inherits the original segment's data, and the right end gets data fresh.
                 // This is important since handle_intersections assigns the whole segment's
@@ -1325,6 +1334,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(right, SegmentEnd::Right)));
 
+                // XXX does /this/ handle my goofy vertical case...?
                 /*
                     // FIXME i don't quite understand what this is trying to do and i think it would be better
                     // solved by switching the points AND ALSO how is a rounding error possible here?  they
@@ -1518,6 +1528,9 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         if segment.data.borrow().edge_type == EdgeType::NonContributing {
             continue;
         }
+        // if segment.data.borrow().polygon_index < TEMP_SECTOR_COUNT {
+        //     continue;
+        // }
         if segment.data.borrow().is_in_result || true {
             included_segments.push(segment);
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
@@ -1625,6 +1638,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         };
 
         // TODO wait, how much does this resemble the hole-finding stuff in Polygon?
+        // FIXME we don't actually care about islands, since we can treat them as separate
+        // top-level contours...
         // Check for a hole inside another contour, or an island inside another hole.
         // Note that we should've already traced the segment below this one, if any, since we're
         // tracing in order from bottom to top.
@@ -1686,6 +1701,22 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
 
         if depth[contourId] & 1 == 1 {
             final_polygon[contourId].change_orientation();
+        }
+    }
+
+    // Assign contour neighbors
+    // XXX is there a better way to do this...?
+    let ncontours = final_polygon.contours.len();
+    for contour in final_polygon.contours.iter_mut() {
+        contour.neighbors.grow(ncontours, false);
+    }
+    for endpoint in &included_endpoints {
+        let &SweepEndpoint(segment, _) = endpoint;
+        if let Some(right_contour_id) = segment.data.borrow().right_contour_id {
+            if let Some(left_contour_id) = segment.data.borrow().left_contour_id {
+                final_polygon[left_contour_id].neighbors.set(right_contour_id, true);
+                final_polygon[right_contour_id].neighbors.set(left_contour_id, true);
+            }
         }
     }
 

@@ -1,7 +1,10 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::iter::repeat;
 use std::cmp::Ordering::Equal;
 
+extern crate bit_vec;
+use bit_vec::BitVec;
 extern crate byteorder;
 use byteorder::{LittleEndian, WriteBytesExt};
 extern crate idchoppers;
@@ -551,6 +554,11 @@ fn do_shapeops() -> Result<()> {
 
 fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
+        if let idchoppers::MapName::MAPxx(n) = map_range.name {
+            if n < 16 {
+                continue;
+            }
+        }
         let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
@@ -570,7 +578,10 @@ fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
     Ok(())
 }
 
+use std::collections::BTreeSet;
+
 fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing>(map: &idchoppers::BareBinaryMap<L, T>) -> Document {
+    let mut map_group = Group::new();
     let mut group = Group::new();
     let mut minx;
     let mut miny;
@@ -619,13 +630,39 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         polygons.push(polygon);
     }
 
+    let mut void_polygons = BitVec::from_elem(map.lines.len() + map.sectors.len(), false);
     for line in map.lines.iter() {
         let mut polygon = idchoppers::shapeops::Polygon::new();
         let mut contour = idchoppers::shapeops::Contour::new();
+        let mut classes = vec!["line"];
+
+        let (frontid, backid) = line.side_indices();
+        if frontid == -1 || backid == -1 {
+            void_polygons.set(polygons.len(), true);
+        }
+
+        if frontid == -1 && backid == -1 {
+            classes.push("zero-sided");
+        }
+        else if frontid == -1 || backid == -1 {
+            classes.push("one-sided");
+        }
+        else {
+            classes.push("two-sided");
+        }
 
         let (v0i, v1i) = line.vertex_indices();
         let v0 = &map.vertices[v0i as usize];
         let v1 = &map.vertices[v1i as usize];
+        map_group.append(
+            Line::new()
+            .set("x1", v0.x)
+            .set("y1", v0.y)
+            .set("x2", v1.x)
+            .set("y2", v1.y)
+            .set("class", classes.join(" "))
+        );
+
         let radius = 16;
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
@@ -667,24 +704,146 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         polygons.push(polygon);
     }
 
+    let mut start = MapPoint::new(0., 0.);
+    for thing in &map.things {
+        if thing.doomednum() == 1 {
+            let (x, y) = thing.coords();
+            start = MapPoint::new(x as f64, y as f64);
+        }
+    }
+
     let result = idchoppers::shapeops::compute(&polygons, idchoppers::shapeops::BooleanOpType::Union);
+    let mut void_contours = BTreeSet::new();
+    let mut seen_contours = BTreeSet::new();
+    let mut next_contours = Vec::new();
     for (i, contour) in result.contours.iter().enumerate() {
+        // Skip any polygons resulting from touching a one-sided wall; the player can never walk
+        // there
+        let mut from_polygons = contour.from_polygons.clone();
+        from_polygons.intersect(&void_polygons);
+        if from_polygons.any() {
+            void_contours.insert(i);
+            continue;
+        }
+
+        if contour.bbox().contains(&start) {
+            next_contours.push(i);
+            seen_contours.insert(i);
+        }
+    }
+
+    // Floodfill to determine visitability and distance
+    let mut contour_distance: Vec<_> = repeat(0usize).take(result.contours.len()).collect();
+    let mut d: usize = 1;
+    while ! next_contours.is_empty() {
+        let contours: Vec<_> = next_contours.drain(..).collect();
+        for &i in &contours {
+            contour_distance[i] = d;
+
+            let mut in_sectors = BTreeSet::new();
+            for (p, from) in result[i].from_polygons.iter().enumerate() {
+                if ! from {
+                    continue;
+                }
+                if p < map.sectors.len() {
+                    in_sectors.insert(p);
+                }
+                else {
+                    let line = &map.lines[p - map.sectors.len()];
+                    let (frontid, backid) = line.side_indices();
+                    if frontid != -1 {
+                        in_sectors.insert(map.sides[frontid as usize].sector as usize);
+                    }
+                    if backid != -1 {
+                        in_sectors.insert(map.sides[backid as usize].sector as usize);
+                    }
+                }
+            }
+            let floor = in_sectors.iter().map(|&s| map.sectors[s].floor_height).max().unwrap_or(0);
+            
+            for (n, touches) in result[i].neighbors.iter().enumerate() {
+                if touches && ! seen_contours.contains(&n) {
+                    let mut in_sectors = BTreeSet::new();
+                    let mut ok = true;
+                    for (p, from) in result[i].from_polygons.iter().enumerate() {
+                        if ! from {
+                            continue;
+                        }
+                        if p < map.sectors.len() {
+                            in_sectors.insert(p);
+                        }
+                        else {
+                            let line = &map.lines[p - map.sectors.len()];
+                            if line.flags() & 0x0001 != 0 {
+                                // impassable
+                                ok = false;
+                                break;
+                            }
+                            let (frontid, backid) = line.side_indices();
+                            if frontid != -1 {
+                                in_sectors.insert(map.sides[frontid as usize].sector as usize);
+                            }
+                            if backid != -1 {
+                                in_sectors.insert(map.sides[backid as usize].sector as usize);
+                            }
+                        }
+                    }
+                    if ! ok {
+                        continue;
+                    }
+                    for &s in &in_sectors {
+                        let sector = &map.sectors[s];
+                        if sector.floor_height - floor > 24 || sector.ceiling_height - sector.floor_height < 56 {
+                            ok = false;
+                            break;
+                        }
+                    }
+                    if ! ok {
+                        continue;
+                    }
+                    
+                    seen_contours.insert(n);
+                    next_contours.push(n);
+                }
+            }
+        }
+        d += 1;
+    }
+
+    for (i, contour) in result.contours.iter().enumerate() {
+        if void_contours.contains(&i) {
+            continue;
+        }
+
         println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
+
         let mut data = Data::new();
         let point = contour.points.last().unwrap();
         data = data.move_to((point.x, point.y));
         for point in &contour.points {
             data = data.line_to((point.x, point.y));
         }
-        group.append(Path::new().set("d", data));
+
+        let color;
+        let distance = contour_distance[i];
+        if distance == 0 {
+            color = String::from("red");
+        }
+        else {
+            let frac = distance as f64 / d as f64 * 255.;
+            color = format!("rgb({}, {}, {})", frac, frac, frac);
+        }
+        group.append(Path::new().set("d", data).set("fill", color));
     }
 
     // Doom's y-axis points up, but SVG's points down.  Rather than mucking with coordinates
     // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
     // the <svg> element, hence the need for this group.)
+    map_group.assign("transform", "scale(1 -1)");
     group.assign("transform", "scale(1 -1)");
     return Document::new()
         .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
         .add(Style::new(include_str!("map-svg.css")))
+        .add(map_group)
         .add(group);
 }

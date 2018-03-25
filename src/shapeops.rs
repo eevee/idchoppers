@@ -902,7 +902,7 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
             packet.left_faces_polygons.set(polygon_index, ! up_faces_outwards);
 
             // compute below_in_result field
-            if below.vertical() || ! is_in_result(operation, below) || below_packet.edge_type == EdgeType::NonContributing {
+            if below.vertical() /* || ! is_in_result(operation, below) */ || below_packet.edge_type == EdgeType::NonContributing {
                 packet.below_in_result = below_packet.below_in_result;
             }
             else {
@@ -1565,8 +1565,6 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     // Construct the final polygon by grouping the segments together into contours
 
     let mut final_polygon = Polygon::new();
-    let mut depth = Vec::new();
-    let mut holeOf = Vec::new();
     for (i, endpoint) in included_endpoints.iter().enumerate() {
         let &SweepEndpoint(segment, end) = endpoint;
         if endpoint.is_processed() {
@@ -1593,7 +1591,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         };
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
-        println!("building a contour from #{} {:?} {:?}", segment.index, end, starting_point);
+        println!("building contour {} from #{} {:?} {:?}", contourId, segment.index, end, starting_point);
         loop {
             current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
@@ -1619,8 +1617,6 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         }
 
         final_polygon.contours.push(contour);
-        depth.push(0);
-        holeOf.push(None);
 
         // FIXME if we go *clockwise* here (because we're tracing a hole), then the segment
         // below us is the first segment of the equivalent *counterclockwise* shape (which
@@ -1630,77 +1626,20 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         // TODO maybe everything should just be counterclockwise?  but then how do i track
         // whether i'm "inside" or "outside"?
         // XXX can this happen for two-sided lines as well?
-        let &SweepEndpoint(segment, end) = if final_polygon[contourId].clockwise() {
-            current_endpoint
-        }
-        else {
-            endpoint
-        };
+        if final_polygon[contourId].clockwise() {
+            let &SweepEndpoint(segment, end) = current_endpoint;
 
-        // TODO wait, how much does this resemble the hole-finding stuff in Polygon?
-        // FIXME we don't actually care about islands, since we can treat them as separate
-        // top-level contours...
-        // Check for a hole inside another contour, or an island inside another hole.
-        // Note that we should've already traced the segment below this one, if any, since we're
-        // tracing in order from bottom to top.
-        println!("checking containment");
-        if end == SegmentEnd::Left && ! segment.is_one_sided() {
-            // This is the left/upper side of a two-sided segment, so it must be a neighbor of the
-            // contour on our right side, which has already been traced.
-            // FIXME this doesn't work for certain kinds of holes, like the pillars in MAP01, since
-            // we won't trace the hole before the islands inside it...  but i think we can do this
-            // much more simply anyway since there can only really be one level of hole?
-            if let Some(neighbor_contour_id) = segment.data.borrow().right_contour_id {
-                println!("...it's the left side of a two-sided line, so it's the neighbor of the other side, contour {:?}", neighbor_contour_id);
-                holeOf[contourId] = holeOf[neighbor_contour_id];
-                depth[contourId] = depth[neighbor_contour_id];
-                if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
-                    final_polygon[parent_contour_id].addHole(contourId);
-                    final_polygon.contours[contourId].setExternal(false);
-                }
+            if let Some(below_segment_id) = segment.data.borrow().below_in_result {
+                // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
+                let below_segment = &segment_order[below_segment_id];
+                let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
+                println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
+                final_polygon[parent_contour_id].addHole(contourId);
+                final_polygon[contourId].setExternal(false);
             }
             else {
-                println!("XXX lower neighbor of two-sided line hasn't been traced yet!!");
+                println!("!!! can't find the counter i'm a hole of");
             }
-        }
-        // XXX: if this is the right side, there MUST be a below
-        else if let Some(below_segment_id) = segment.data.borrow().below_in_result {
-            println!("...it's got a below, #{}, so something must be going on here", below_segment_id);
-            // This is either the right/lower side of a two-sided segment, or the only side of a
-            // one-sided segment.  Either way, its containment is determined by the segment below.
-            // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
-            let below_segment = &segment_order[below_segment_id];
-            
-            // If this is the left side (of a one-sided segment) and the segment below it is an
-            // island (or a top-level contour), then this is a neighbor.
-            if end == SegmentEnd::Left && depth[below_segment.data.borrow().right_contour_id.unwrap()] % 2 == 0 {
-                // FIXME uggh this is exactly copy-pasted from above
-                // XXX also this was detected in the original code by looking at external()?
-                let neighbor_contour_id = below_segment.data.borrow().right_contour_id.unwrap();
-                println!("...ah, a neighbor of contour {:?}", neighbor_contour_id);
-                holeOf[contourId] = holeOf[neighbor_contour_id];
-                depth[contourId] = depth[neighbor_contour_id];
-                if let Some(parent_contour_id) = holeOf[neighbor_contour_id] {
-                    final_polygon[parent_contour_id].addHole(contourId);
-                    final_polygon.contours[contourId].setExternal(false);
-                }
-            }
-            // Otherwise, it's a hole/lake inside the contour below.
-            else {
-                let below_contour_id = below_segment.data.borrow().left_contour_id.or(below_segment.data.borrow().right_contour_id).unwrap();
-                println!("...ah, it's inside contour {:?}", below_contour_id);
-                final_polygon[below_contour_id].addHole(contourId);
-                holeOf[contourId] = Some(below_contour_id);
-                depth[contourId] = depth[below_contour_id] + 1;
-                final_polygon.contours[contourId].setExternal(false);
-            }
-        }
-        else if end == SegmentEnd::Right {
-            panic!("right/lower side MUST have a lower neighbor!");
-        }
-
-        if depth[contourId] & 1 == 1 {
-            final_polygon[contourId].change_orientation();
         }
     }
 

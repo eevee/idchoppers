@@ -366,9 +366,8 @@ fn map_as_svg(map: &Map) -> Document {
     let mut classes = Vec::new();
     for line in map.iter_lines() {
         classes.clear();
-        let (v0i, v1i) = line.vertex_indices();
-        let v0 = map.vertex(v0i);
-        let v1 = map.vertex(v1i);
+        let v0 = line.start();
+        let v1 = line.end();
         classes.push("line");
         let (frontid, backid) = line.side_indices();
         if frontid.is_none() && backid.is_none() {
@@ -654,22 +653,26 @@ fn do_shapeops() -> Result<()> {
 
 fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
+        /*
         if let idchoppers::MapName::MAPxx(n) = map_range.name {
             if n < 2 {
                 continue;
             }
         }
+        */
         let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
-                let doc = route_map_as_svg(&map);
+                let fullmap = Map::from_bare(&map);
+                let doc = route_map_as_svg(&fullmap);
                 svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
                 break;
             }
             idchoppers::BareMap::Hexen(map) => {
-                let doc = route_map_as_svg(&map);
-                svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
+                //let doc = route_map_as_svg(&map);
+                //svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
+                println!("(sorry, can't do hexen maps atm)");
                 break;
             }
         }
@@ -679,47 +682,27 @@ fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
 }
 
 use std::collections::BTreeSet;
+use std::collections::HashSet;
 
-fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing>(map: &idchoppers::BareBinaryMap<L, T>) -> Document {
+const PLAYER_STEP_HEIGHT: i32 = 24;
+const PLAYER_HEIGHT: i32 = 56;
+
+fn route_map_as_svg(map: &Map) -> Document {
+    enum PolygonRef<'a> {
+        Sector(idchoppers::map::Handle<idchoppers::map::Sector>),
+        Line(idchoppers::map::BoundLine<'a>),
+    }
+
+
     let mut map_group = Group::new();
     let mut group = Group::new();
-    let mut minx;
-    let mut miny;
-    if let Some(vertex) = map.vertices.first() {
-        minx = vertex.x;
-        miny = vertex.y;
-    }
-    else if let Some(thing) = map.things.first() {
-        let (x, y) = thing.coords();
-        minx = x;
-        miny = y;
-    }
-    else {
-        minx = 0;
-        miny = 0;
-    }
-    let mut maxx = minx;
-    let mut maxy = miny;
+    let bbox = map.bbox();
 
-    for vertex in map.vertices.iter() {
-        if vertex.x < minx {
-            minx = vertex.x;
-        }
-        if vertex.x > maxx {
-            maxx = vertex.x;
-        }
-        if vertex.y < miny {
-            miny = vertex.y;
-        }
-        if vertex.y > maxy {
-            maxy = vertex.y;
-        }
-    }
-
-    let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
+    let mut polygons = Vec::new();
+    let mut polygon_refs = Vec::new();
     //let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
 
-    for (s, sector) in map.sectors.iter().enumerate() {
+    for (s, sector) in map.iter_sectors().enumerate() {
         let mut polygon = idchoppers::shapeops::Polygon::new();
         for points in map.sector_to_polygons(s).iter() {
             println!("{} {:?}", s, points);
@@ -728,32 +711,30 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
             polygon.contours.push(contour);
         }
         polygons.push(polygon);
+        polygon_refs.push(PolygonRef::Sector(s.into()));
     }
 
-    let mut void_polygons = BitVec::from_elem(map.lines.len() + map.sectors.len(), false);
-    for line in map.lines.iter() {
+    let mut void_polygons = BitVec::from_elem(polygons.len(), false);
+    for line in map.iter_lines() {
         let mut polygon = idchoppers::shapeops::Polygon::new();
         let mut contour = idchoppers::shapeops::Contour::new();
         let mut classes = vec!["line"];
 
         let (frontid, backid) = line.side_indices();
-        if frontid == -1 || backid == -1 {
-            void_polygons.set(polygons.len(), true);
-        }
+        void_polygons.push(! line.is_two_sided());
 
-        if frontid == -1 && backid == -1 {
-            classes.push("zero-sided");
-        }
-        else if frontid == -1 || backid == -1 {
+        if line.is_one_sided() {
             classes.push("one-sided");
         }
-        else {
+        else if line.is_two_sided() {
             classes.push("two-sided");
         }
+        else {
+            classes.push("zero-sided");
+        }
 
-        let (v0i, v1i) = line.vertex_indices();
-        let v0 = &map.vertices[v0i as usize];
-        let v1 = &map.vertices[v1i as usize];
+        let v0 = line.start();
+        let v1 = line.end();
         map_group.append(
             Line::new()
             .set("x1", v0.x)
@@ -763,7 +744,7 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
             .set("class", classes.join(" "))
         );
 
-        let radius = 16;
+        let radius = 16.;
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
         // as well the same ways, albeit with an extra vertex.)
@@ -802,15 +783,10 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         }
         polygon.contours.push(contour);
         polygons.push(polygon);
+        polygon_refs.push(PolygonRef::Line(line));
     }
 
-    let mut start = MapPoint::new(0., 0.);
-    for thing in &map.things {
-        if thing.doomednum() == 1 {
-            let (x, y) = thing.coords();
-            start = MapPoint::new(x as f64, y as f64);
-        }
-    }
+    let start = map.find_player_start().unwrap_or(MapPoint::new(0., 0.));
 
     let result = idchoppers::shapeops::compute(&polygons, idchoppers::shapeops::BooleanOpType::Union);
     let mut void_contours = BTreeSet::new();
@@ -840,60 +816,59 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
         for &i in &contours {
             contour_distance[i] = d;
 
-            let mut in_sectors = BTreeSet::new();
+            let mut in_sectors = HashSet::new();
             for (p, from) in result[i].from_polygons.iter().enumerate() {
                 if ! from {
                     continue;
                 }
-                if p < map.sectors.len() {
-                    in_sectors.insert(p);
-                }
-                else {
-                    let line = &map.lines[p - map.sectors.len()];
-                    let (frontid, backid) = line.side_indices();
-                    if frontid != -1 {
-                        in_sectors.insert(map.sides[frontid as usize].sector as usize);
+                match polygon_refs[p] {
+                    PolygonRef::Sector(sector) => {
+                        in_sectors.insert(sector);
                     }
-                    if backid != -1 {
-                        in_sectors.insert(map.sides[backid as usize].sector as usize);
+                    PolygonRef::Line(line) => {
+                        if let Some(front) = line.front() {
+                            in_sectors.insert(front.sector);
+                        }
+                        if let Some(back) = line.back() {
+                            in_sectors.insert(back.sector);
+                        }
                     }
                 }
             }
-            let floor = in_sectors.iter().map(|&s| map.sectors[s].floor_height).max().unwrap_or(0);
+            let floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).max().unwrap_or(0);
             
             for (n, touches) in result[i].neighbors.iter().enumerate() {
                 if touches && ! seen_contours.contains(&n) {
-                    let mut in_sectors = BTreeSet::new();
+                    let mut in_sectors = HashSet::new();
                     let mut ok = true;
                     for (p, from) in result[i].from_polygons.iter().enumerate() {
                         if ! from {
                             continue;
                         }
-                        if p < map.sectors.len() {
-                            in_sectors.insert(p);
-                        }
-                        else {
-                            let line = &map.lines[p - map.sectors.len()];
-                            if line.flags() & 0x0001 != 0 {
-                                // impassable
-                                ok = false;
-                                break;
+                        match polygon_refs[p] {
+                            PolygonRef::Sector(sector) => {
+                                in_sectors.insert(sector);
                             }
-                            let (frontid, backid) = line.side_indices();
-                            if frontid != -1 {
-                                in_sectors.insert(map.sides[frontid as usize].sector as usize);
-                            }
-                            if backid != -1 {
-                                in_sectors.insert(map.sides[backid as usize].sector as usize);
+                            PolygonRef::Line(line) => {
+                                if line.blocks_player() {
+                                    ok = false;
+                                    break;
+                                }
+                                if let Some(front) = line.front() {
+                                    in_sectors.insert(front.sector);
+                                }
+                                if let Some(back) = line.back() {
+                                    in_sectors.insert(back.sector);
+                                }
                             }
                         }
                     }
                     if ! ok {
                         continue;
                     }
-                    for &s in &in_sectors {
-                        let sector = &map.sectors[s];
-                        if sector.floor_height - floor > 24 || sector.ceiling_height - sector.floor_height < 56 {
+                    for &sectorh in &in_sectors {
+                        let sector = map.sector(sectorh);
+                        if sector.floor_height() - floor > PLAYER_STEP_HEIGHT || sector.ceiling_height() - sector.floor_height() < PLAYER_HEIGHT {
                             ok = false;
                             break;
                         }
@@ -955,7 +930,7 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
     map_group.assign("transform", "scale(1 -1)");
     group.assign("transform", "scale(1 -1)");
     return Document::new()
-        .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
+        .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
         .add(map_group)
         .add(group);

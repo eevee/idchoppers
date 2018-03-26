@@ -36,7 +36,7 @@ const SPEW: bool = false;
 const TEMP_SECTOR_COUNT: usize = 3;
 
 
-pub struct MapSpace;
+use super::geom::MapSpace;
 pub type MapPoint = TypedPoint2D<f64, MapSpace>;
 pub type MapRect = TypedRect<f64, MapSpace>;
 pub type MapSize = TypedSize2D<f64, MapSpace>;

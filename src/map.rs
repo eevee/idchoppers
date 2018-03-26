@@ -53,6 +53,8 @@ impl Map {
             let sector = &mut map.sectors[sectorh.0];
             sector.tag = bare_sector.sector_tag as u32;
             sector.special = bare_sector.sector_type as u32;
+            sector.floor_height = bare_sector.floor_height as i32;
+            sector.ceiling_height = bare_sector.ceiling_height as i32;
         }
         for bare_vertex in bare_map.vertices.iter() {
             map.add_vertex(bare_vertex.x as f64, bare_vertex.y as f64);
@@ -67,6 +69,7 @@ impl Map {
         for bare_line in bare_map.lines.iter() {
             let handle = map.add_line((bare_line.v0 as usize).into(), (bare_line.v1 as usize).into());
             let line = map.line_mut(handle);
+            line.flags = bare_line.flags as u32;
             // FIXME and here's where we start to go awry -- this should use a method.  so should
             // new side w/ sector
             if bare_line.front_sidedef != -1 {
@@ -86,10 +89,6 @@ impl Map {
         return map;
     }
 
-    // FIXME this should be an Option or even a Result
-    fn sector(&self, handle: Handle<Sector>) -> &Sector {
-        &self.sectors[handle.0]
-    }
     fn side_mut(&mut self, handle: Handle<Side>) -> &mut Side {
         &mut self.sides[handle.0]
     }
@@ -98,7 +97,7 @@ impl Map {
     }
 
     fn add_sector(&mut self) -> Handle<Sector> {
-        self.sectors.push(Sector{ special: 0, tag: 0 });
+        self.sectors.push(Sector{ special: 0, tag: 0, floor_height: 0, ceiling_height: 0 });
         return (self.sectors.len() - 1).into();
     }
     fn add_side(&mut self, sector: Handle<Sector>) -> Handle<Side> {
@@ -107,7 +106,7 @@ impl Map {
             lower_texture: "".into(),
             middle_texture: "".into(),
             upper_texture: "".into(),
-            sector_id: sector.0,
+            sector: sector,
         });
         return (self.sides.len() - 1).into();
     }
@@ -120,6 +119,7 @@ impl Map {
         self.lines.push(Line{
             start,
             end,
+            flags: 0,
             special: 0,
             front: None,
             back: None,
@@ -127,8 +127,10 @@ impl Map {
         return (self.lines.len() - 1).into();
     }
 
-    pub fn iter_lines(&self) -> std::slice::Iter<Line> {
-        return self.lines.iter();
+    pub fn iter_lines(&self) -> <Vec<BoundLine> as IntoIterator>::IntoIter {
+        let bound: Vec<_> = self.lines.iter().map(|a| BoundLine(a, self)).collect();
+        return bound.into_iter();
+//        return self.lines.iter().map(|a| BoundLine(a, self));
     }
     pub fn iter_sectors(&self) -> std::slice::Iter<Sector> {
         return self.sectors.iter();
@@ -141,10 +143,27 @@ impl Map {
         return &self.vertices[handle.0];
     }
 
+    pub fn side(&self, handle: Handle<Side>) -> &Side {
+        return &self.sides[handle.0];
+    }
+
+    pub fn sector(&self, handle: Handle<Sector>) -> &Sector {
+        return &self.sectors[handle.0];
+    }
+
     pub fn bbox(&self) -> Rect {
         // TODO ah heck, should include Things too
         let points: Vec<_> = self.vertices.iter().map(|v| Point::new(v.x, v.y)).collect();
         return Rect::from_points(points.iter());
+    }
+
+    pub fn find_player_start(&self) -> Option<Point> {
+        for thing in &self.things {
+            if thing.doomednum() == 1 {
+                return Some(thing.point());
+            }
+        }
+        return None;
     }
 
     pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<Point>> {
@@ -179,7 +198,7 @@ impl Map {
             // FIXME need to handle self-referencing sectors, but also 
             if let Some(front) = line.front.map(|h| &self.sides[h.0]) {
                 if let Some(back) = line.back.map(|h| &self.sides[h.0]) {
-                    if front.sector_id == back.sector_id {
+                    if front.sector == back.sector {
                         continue;
                     }
                 }
@@ -192,7 +211,7 @@ impl Map {
                 }
                 // TODO this and the vertices lookups might be bogus and crash...
                 let side = &self.sides[sideid.unwrap().0];
-                if side.sector_id as usize == s {
+                if side.sector.0 == s {
                     let v0 = &self.vertices[line.start.0];
                     let v1 = &self.vertices[line.end.0];
                     let edge = Edge{
@@ -284,8 +303,8 @@ pub enum Facing {
 
 pub struct Handle<T>(usize, PhantomData<*const T>);
 
-// Implemented by hand because the auto-generated Clone impl assumes T must also be Clone, but we
-// don't actually own a T, so that trait is unnecessary.  Same for Copy.
+// These traits are implemented by hand because #derive'd impls only apply when T implements the
+// same trait, but we don't actually own a T, so that bound is unnecessary.
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         return Handle(self.0, PhantomData);
@@ -293,6 +312,20 @@ impl<T> Clone for Handle<T> {
 }
 
 impl<T> Copy for Handle<T> {}
+
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
+impl<T> Eq for Handle<T> {}
+
+impl<T> std::hash::Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
+    }
+}
+
 
 impl<T> From<usize> for Handle<T> {
     fn from(index: usize) -> Self {
@@ -320,7 +353,7 @@ impl Thing {
 pub struct Line {
     start: Handle<Vertex>,
     end: Handle<Vertex>,
-    //flags: ???
+    flags: u32,
     special: usize,
     //sector_tag -- oops, different in zdoom...
     front: Option<Handle<Side>>,
@@ -339,11 +372,72 @@ impl Line {
     pub fn has_special(&self) -> bool {
         return self.special != 0;
     }
+
+    pub fn blocks_player(&self) -> bool {
+        return self.flags & 1 != 0;
+    }
+
+    pub fn is_one_sided(&self) -> bool {
+        return self.front.is_some() != self.back.is_some();
+    }
+
+    pub fn is_two_sided(&self) -> bool {
+        return self.front.is_some() && self.back.is_some();
+    }
+}
+
+// A Line that knows what map it came from, so it can look up its actual sides and vertices
+#[derive(Clone, Copy)]
+pub struct BoundLine<'a>(&'a Line, &'a Map);
+impl<'a> BoundLine<'a> {
+    pub fn start(&self) -> &'a Vertex {
+        return self.1.vertex(self.0.start);
+    }
+
+    pub fn end(&self) -> &'a Vertex {
+        return self.1.vertex(self.0.end);
+    }
+
+    pub fn front(&self) -> Option<&'a Side> {
+        return self.0.front.map(|s| self.1.side(s));
+    }
+
+    pub fn back(&self) -> Option<&'a Side> {
+        return self.0.back.map(|s| self.1.side(s));
+    }
+
+    // TODO these are all delegates, eugh
+    pub fn vertex_indices(&self) -> (Handle<Vertex>, Handle<Vertex>) {
+        self.0.vertex_indices()
+    }
+
+    pub fn side_indices(&self) -> (Option<Handle<Side>>, Option<Handle<Side>>) {
+        self.0.side_indices()
+    }
+
+    pub fn has_special(&self) -> bool {
+        self.0.has_special()
+    }
+
+    pub fn blocks_player(&self) -> bool {
+        self.0.blocks_player()
+    }
+
+    pub fn is_one_sided(&self) -> bool {
+        self.0.is_one_sided()
+    }
+
+    pub fn is_two_sided(&self) -> bool {
+        self.0.is_two_sided()
+    }
 }
 
 pub struct Sector {
     tag: u32,
     special: u32,
+
+    floor_height: i32,
+    ceiling_height: i32,
 }
 
 impl Sector {
@@ -354,6 +448,14 @@ impl Sector {
     pub fn special(&self) -> u32 {
         return self.special;
     }
+
+    pub fn floor_height(&self) -> i32 {
+        return self.floor_height;
+    }
+
+    pub fn ceiling_height(&self) -> i32 {
+        return self.ceiling_height;
+    }
 }
 
 pub struct Side {
@@ -362,7 +464,13 @@ pub struct Side {
     pub upper_texture: String,
     pub lower_texture: String,
     pub middle_texture: String,
-    pub sector_id: usize,
+    pub sector: Handle<Sector>,
+}
+
+#[derive(Clone, Copy)]
+pub struct BoundSide<'a>(&'a Side, &'a Map);
+impl<'a> BoundSide<'a> {
+    //pub fn sector(&self) -> 
 }
 
 pub struct Vertex {

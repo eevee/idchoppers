@@ -19,6 +19,7 @@ use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 
 pub mod errors;
 use errors::{ErrorKind, Result, nom_to_result};
+pub mod geom;
 pub mod map;
 pub mod universe;
 pub mod shapeops;
@@ -1068,7 +1069,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
 
             let mut outline = Vec::new();
             while next_vertices.len() > 0 {
-                let mut vertices = next_vertices;
+                let vertices = next_vertices;
                 next_vertices = Vec::new();
                 for vertex in vertices.iter() {
                     if seen_vertices.contains_key(&VertexRef(vertex)) {

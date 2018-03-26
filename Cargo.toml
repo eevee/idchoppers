@@ -4,6 +4,7 @@ version = "0.1.0"
 authors = ["Eevee (Lexy Munroe) <eevee.git@veekun.com>"]
 
 [dependencies]
+bitflags = "^1.0"
 byteorder = "^1.0"
 error-chain = "0.10.0"
 euclid = "^0.16"

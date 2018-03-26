@@ -7,8 +7,6 @@ extern crate bit_vec;
 use bit_vec::BitVec;
 extern crate byteorder;
 use byteorder::{LittleEndian, WriteBytesExt};
-extern crate idchoppers;
-use idchoppers::errors::{Error, Result};
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
@@ -18,6 +16,10 @@ extern crate termcolor;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 #[macro_use]
 extern crate clap;
+
+extern crate idchoppers;
+use idchoppers::errors::{Error, Result};
+use idchoppers::map::Map;
 
 fn main() {
     match run() {
@@ -157,7 +159,8 @@ fn do_chart(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
-                let doc = bare_map_as_svg(&map);
+                let fullmap = Map::from_bare(&map);
+                let doc = map_as_svg(&fullmap);
                 svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
                 break;
             }
@@ -352,6 +355,103 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
     group.assign("transform", "scale(1 -1)");
     return Document::new()
         .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
+        .add(Style::new(include_str!("map-svg.css")))
+        .add(group);
+}
+
+fn map_as_svg(map: &Map) -> Document {
+    let mut group = Group::new();
+    let bbox = map.bbox();
+
+    let mut classes = Vec::new();
+    for line in map.iter_lines() {
+        classes.clear();
+        let (v0i, v1i) = line.vertex_indices();
+        let v0 = map.vertex(v0i);
+        let v1 = map.vertex(v1i);
+        classes.push("line");
+        let (frontid, backid) = line.side_indices();
+        if frontid.is_none() && backid.is_none() {
+            classes.push("zero-sided");
+        }
+        else if frontid.is_none() || backid.is_none() {
+            classes.push("one-sided");
+        }
+        else {
+            classes.push("two-sided");
+        }
+        if line.has_special() {
+            classes.push("has-special");
+        }
+
+        // FIXME should annotate with line id
+        group.append(
+            Line::new()
+            .set("x1", v0.x)
+            .set("y1", v0.y)
+            .set("x2", v1.x)
+            .set("y2", v1.y)
+            .set("class", classes.join(" "))
+        );
+    }
+
+    for thing in map.iter_things() {
+        let point = thing.point();
+        let (color, radius);
+        if let Some(thing_type) = idchoppers::universe::lookup_thing_type(thing.doomednum() as u32) {
+            color = match thing_type.category {
+                idchoppers::universe::ThingCategory::PlayerStart => "green",
+                idchoppers::universe::ThingCategory::Monster => "red",
+                idchoppers::universe::ThingCategory::Miscellaneous => "gray",
+                _ => "magenta",
+            };
+            radius = thing_type.radius;
+        }
+        else {
+            color = "gray";
+            radius = 8;
+        }
+        group.append(
+            Rectangle::new()
+            .set("x", point.x - (radius as idchoppers::geom::Coord))
+            .set("y", point.y - (radius as idchoppers::geom::Coord))
+            .set("width", radius * 2)
+            .set("height", radius * 2)
+            .set("fill", color));
+    }
+
+    for (s, sector) in map.iter_sectors().enumerate() {
+        let mut data = Data::new();
+        let polys = map.sector_to_polygons(s);
+        // TODO wait, hang on, can i have multiple shapes in one path?  i think so...
+        for poly in polys.iter() {
+            let (first, others) = poly.split_first().unwrap();
+            data = data.move_to((first.x, first.y));
+            for vertex in others.iter() {
+                data = data.line_to((vertex.x, vertex.y));
+            }
+            data = data.line_to((first.x, first.y));
+        }
+
+        let mut path = Path::new().set("d", data);
+        if sector.tag() != 0 {
+            path.assign("data-sector-tag", sector.tag());
+        }
+        classes.clear();
+        classes.push("sector");
+        if sector.special() == 9 {
+            classes.push("secret");
+        }
+        path.assign("class", classes.join(" "));
+        group.append(path);
+    }
+
+    // Doom's y-axis points up, but SVG's points down.  Rather than mucking with coordinates
+    // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
+    // the <svg> element, hence the need for this group.)
+    group.assign("transform", "scale(1 -1)");
+    return Document::new()
+        .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
         .add(group);
 }
@@ -555,7 +655,7 @@ fn do_shapeops() -> Result<()> {
 fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
         if let idchoppers::MapName::MAPxx(n) = map_range.name {
-            if n < 16 {
+            if n < 2 {
                 continue;
             }
         }
@@ -811,17 +911,30 @@ fn route_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThin
     }
 
     for (i, contour) in result.contours.iter().enumerate() {
+        println!("contour #{}: external {:?}, counterclockwise {:?}, void? {}, holes {:?}", i, contour.external(), contour.counterclockwise(), void_contours.contains(&i), contour.holes);
+
+        if ! contour.external() {
+            continue;
+        }
         if void_contours.contains(&i) {
             continue;
         }
-
-        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
 
         let mut data = Data::new();
         let point = contour.points.last().unwrap();
         data = data.move_to((point.x, point.y));
         for point in &contour.points {
             data = data.line_to((point.x, point.y));
+        }
+
+        for &hole_id in &contour.holes {
+            let hole = &result[hole_id];
+
+            let point = hole.points.last().unwrap();
+            data = data.move_to((point.x, point.y));
+            for point in &hole.points {
+                data = data.line_to((point.x, point.y));
+            }
         }
 
         let color;

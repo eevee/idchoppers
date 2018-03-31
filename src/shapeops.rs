@@ -55,7 +55,7 @@ impl MapRectX for MapRect {
 }
 
 fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
-    return a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap());
+    a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap())
 }
 
 
@@ -67,11 +67,11 @@ struct Segment2 {
 
 impl Segment2 {
     fn new(source: MapPoint, target: MapPoint) -> Self {
-        return Self{ source, target };
+        Self { source, target }
     }
 
     fn is_vertical(&self) -> bool {
-        return self.source.x == self.target.x;
+        self.source.x == self.target.x
     }
 }
 
@@ -81,24 +81,24 @@ impl Segment2 {
 
 // NOTE: this, and everything else ported from the paper, assumes the y axis points UP
 pub fn triangle_signed_area(a: MapPoint, b: MapPoint, c: MapPoint) -> f64 {
-    return (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y);
+    (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y)
 }
 
 fn check_span_overlap(u0: f64, u1: f64, v0: f64, v1: f64) -> Option<(f64, f64)> {
     if u1 < v0 || u0 > v1 {
-        return None;
+        None
     }
-    if u1 > v0 {
+    else if u1 > v0 {
         if u0 < v1 {
-            return Some((u0.max(v0), u1.min(v1)));
+            Some((u0.max(v0), u1.min(v1)))
         } else {
             // u0 == v1
-            return Some((u0, u0));
+            Some((u0, u0))
         }
     }
     else {
         // u1 == v0
-        return Some((u1, u1));
+        Some((u1, u1))
     }
 }
 
@@ -189,7 +189,7 @@ fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
         }
     }
 
-    return SegmentIntersection::None;
+    SegmentIntersection::None
 }
 
 
@@ -239,7 +239,7 @@ impl<T> SweepSegment<T> {
             (point1, point0, true)
         };
 
-        return SweepSegment{
+        SweepSegment{
             left_point,
             right_point,
             // TODO hang on, this is only even used in one place?  in polygon::compute_holes??
@@ -248,40 +248,40 @@ impl<T> SweepSegment<T> {
             index,
             order,
             data,
-        };
+        }
     }
 
-    /** Is the line segment (left_point, right_point) below point p */
+    /// Is the line segment (left_point, right_point) below point p
     fn below(&self, p: MapPoint) -> bool {
-        return triangle_signed_area(self.left_point, self.right_point, p) > 0.0000001;
+        triangle_signed_area(self.left_point, self.right_point, p) > 0.0000001
     }
 
-    /** Is the line segment (point, other_poin) above point p */
+    /// Is the line segment (point, other_point) above point p
     fn above(&self, p: MapPoint) -> bool {
-        return ! self.below(p);
+        ! self.below(p)
     }
 
-    /** Is the line segment (point, other_poin) a vertical line segment */
+    /// Is the line segment (point, other_point) a vertical line segment
     fn vertical(&self) -> bool {
-        return self.left_point.x == self.right_point.x;
+        self.left_point.x == self.right_point.x
     }
 
-    /** Return the line segment */
+    /// Return the line segment
     fn segment(&self) -> Segment2 {
-        return Segment2::new(self.left_point, self.right_point);
+        Segment2::new(self.left_point, self.right_point)
     }
 }
 
 impl<T> cmp::PartialEq for SweepSegment<T> {
     fn eq(&self, other: &SweepSegment<T>) -> bool {
-        return self.cmp(other) == Ordering::Equal;
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl<T> cmp::Eq for SweepSegment<T> { }
 
 impl<T> cmp::PartialOrd for SweepSegment<T> {
     fn partial_cmp(&self, other: &SweepSegment<T>) -> Option<Ordering> {
-        return Some(self.cmp(other));
+        Some(self.cmp(other))
     }
 }
 
@@ -377,14 +377,14 @@ impl<'a, T: 'a> SweepEndpoint<'a, T> {
 }
 impl<'a, T: 'a> cmp::PartialEq for SweepEndpoint<'a, T> {
     fn eq(&self, other: &SweepEndpoint<'a, T>) -> bool {
-        return self.cmp(other) == Ordering::Equal;
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl<'a, T: 'a> cmp::Eq for SweepEndpoint<'a, T> { }
 
 impl<'a, T: 'a> cmp::PartialOrd for SweepEndpoint<'a, T> {
     fn partial_cmp(&self, other: &SweepEndpoint<'a, T>) -> Option<Ordering> {
-        return Some(self.cmp(other));
+        Some(self.cmp(other))
     }
 }
 
@@ -394,7 +394,7 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
             return Ordering::Equal;
         }
 
-        return self.point().x.partial_cmp(&other.point().x).unwrap()
+        self.point().x.partial_cmp(&other.point().x).unwrap()
             .then(self.point().y.partial_cmp(&other.point().y).unwrap())
             .then_with(|| {
                 // If the points coincide, a right endpoint takes priority
@@ -423,7 +423,7 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
                 // algorithm was designed around mutate-splitting the original...
                 //|| other.0.index.cmp(&self.0.index)
                 || self.0.order.cmp(&other.0.order)
-            );
+            )
     }
 }
 
@@ -432,9 +432,9 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
 
 #[derive(Clone)]
 pub struct Contour {
-    /** Set of points conforming the external contour */
+    /// Set of points conforming the external contour
     pub points: Vec<MapPoint>,
-    /** Holes of the contour. They are stored as the indexes of the holes in a polygon class */
+    /// Holes of the contour. They are stored as the indexes of the holes in a polygon class
     pub holes: Vec<usize>,
     pub from_polygons: BitVec,
     // XXX this is maybe an odd way to go about this
@@ -446,14 +446,14 @@ pub struct Contour {
 
 impl Contour {
     pub fn new() -> Self {
-        return Contour{
+        Contour{
             points: Vec::new(),
             holes: Vec::new(),
             from_polygons: BitVec::new(),
             neighbors: BitVec::new(),
             _external: true,
             _is_clockwise: Cell::new(None),
-        };
+        }
     }
 
     pub fn bbox(&self) -> MapRect {
@@ -470,7 +470,7 @@ impl Contour {
             min_y = f64::min(min_y, point.y);
             max_y = f64::max(max_y, point.y);
         }
-        return MapRect::new(MapPoint::new(min_x, min_y), MapSize::new(max_x - min_x, max_y - min_y));
+        MapRect::new(MapPoint::new(min_x, min_y), MapSize::new(max_x - min_x, max_y - min_y))
     }
 
     // FIXME should this be hidden in a RefCell since it's a cache?  but i want to actively avoid
@@ -486,10 +486,10 @@ impl Contour {
         }
         let is_clockwise = area < 0.;
         self._is_clockwise.set(Some(is_clockwise));
-        return is_clockwise;
+        is_clockwise
     }
     pub fn counterclockwise(&self) -> bool {
-        return ! self.clockwise();
+        ! self.clockwise()
     }
 
     fn move_by(&mut self, dx: f64, dy: f64) {
@@ -498,14 +498,14 @@ impl Contour {
         }
     }
 
-    /** Get the p-th vertex of the external contour */
-    fn vertex(&self, p: usize) -> MapPoint { return self.points[p]; }
+    /// Get the p-th vertex of the external contour
+    fn vertex(&self, p: usize) -> MapPoint { self.points[p] }
     fn segment(&self, p: usize) -> Segment2 {
         if p == self.points.len() - 1 {
-            return Segment2::new(*self.points.last().unwrap(), self.points[0]);
+            Segment2::new(*self.points.last().unwrap(), self.points[0])
         }
         else {
-            return Segment2::new(self.points[p], self.points[p + 1]);
+            Segment2::new(self.points[p], self.points[p + 1])
         }
     }
 
@@ -515,7 +515,7 @@ impl Contour {
         for i in 0 .. self.points.len() {
             ret.push(self.segment(i));
         }
-        return ret;
+        ret
     }
 
     pub fn change_orientation(&mut self) {
@@ -549,16 +549,16 @@ impl Contour {
         self.holes.clear();
     }
     fn last(&self) -> MapPoint {
-        return *self.points.last().unwrap();
+        *self.points.last().unwrap()
     }
     fn addHole(&mut self, ind: usize) {
         self.holes.push(ind);
     }
     fn hole(&self, p: usize) -> usize {
-        return self.holes[p];
+        self.holes[p]
     }
     pub fn external(&self) -> bool {
-        return self._external;
+        self._external
     }
     fn setExternal(&mut self, e: bool) {
         self._external = e;
@@ -568,36 +568,36 @@ impl Contour {
 struct IndexComparator<'a, T: 'a + Ord>(usize, &'a Vec<T>);
 impl<'a, T: 'a + Ord> cmp::PartialEq for IndexComparator<'a, T> {
     fn eq(&self, other: &IndexComparator<'a, T>) -> bool {
-        return self.cmp(other) == Ordering::Equal;
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl<'a, T: 'a + Ord> cmp::Eq for IndexComparator<'a, T> { }
 impl<'a, T: 'a + Ord> cmp::PartialOrd for IndexComparator<'a, T> {
     fn partial_cmp(&self, other: &IndexComparator<'a, T>) -> Option<Ordering> {
-        return Some(self.cmp(other));
+        Some(self.cmp(other))
     }
 }
 impl<'a, T: 'a + Ord> cmp::Ord for IndexComparator<'a, T> {
     fn cmp(&self, other: &IndexComparator<'a, T>) -> Ordering {
-        return self.1[self.0].cmp(&self.1[other.0]);
+        self.1[self.0].cmp(&self.1[other.0])
     }
 }
 
 
 #[derive(Clone)]
 pub struct Polygon {
-    /** Set of contours conforming the polygon */
+    /// Set of contours conforming the polygon
     pub contours: Vec<Contour>,
 }
 
 impl Polygon {
     pub fn new() -> Self {
-        return Polygon{ contours: Vec::new() };
+        Polygon{ contours: Vec::new() }
     }
 
-    /** Get the p-th contour */
+    /// Get the p-th contour
     fn contour(&self, p: usize) -> &Contour {
-        return &self.contours[p];
+        &self.contours[p]
     }
 
     fn join(&mut self, mut pol: Polygon) {
@@ -611,7 +611,7 @@ impl Polygon {
     }
 
     fn nvertices(&self) -> usize {
-        return self.contours.iter().map(|c| c.points.len()).sum();
+        self.contours.iter().map(|c| c.points.len()).sum()
     }
 
     pub fn bbox(&self) -> MapRect {
@@ -622,7 +622,7 @@ impl Polygon {
         for contour in self.contours.iter().skip(1) {
             bbox = bbox.union(&contour.bbox());
         }
-        return bbox;
+        bbox
     }
 
     fn move_by(&mut self, dx: f64, dy: f64) {
@@ -750,12 +750,12 @@ impl ops::Index<usize> for Polygon {
     type Output = Contour;
 
     fn index(&self, index: usize) -> &Self::Output {
-        return &self.contours[index];
+        &self.contours[index]
     }
 }
 impl ops::IndexMut<usize> for Polygon {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        return &mut self.contours[index];
+        &mut self.contours[index]
     }
 }
 
@@ -793,7 +793,7 @@ struct SegmentPacket {
 
 impl SegmentPacket {
     fn new(polygon_index: usize, npolygons: usize) -> Self {
-        return SegmentPacket{
+        SegmentPacket{
             polygon_index,
             edge_type: EdgeType::Normal,
             up_faces_outwards: false,
@@ -822,10 +822,10 @@ impl SegmentPacket {
 impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
     fn is_processed(&self) -> bool {
         let packet = self.0.data.borrow();
-        return match self.1 {
+        match self.1 {
             SegmentEnd::Left => packet.left_processed,
             SegmentEnd::Right => packet.right_processed,
-        };
+        }
     }
 
     fn mark_processed(&self) {
@@ -837,15 +837,15 @@ impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
     }
 
     fn is_one_sided(&self) -> bool {
-        return self.0.is_one_sided();
+        self.0.is_one_sided()
     }
 
     fn faces_void(&self) -> bool {
         let packet = self.0.data.borrow();
         // We face into the void iff we're in no other polygons, and we're the side of the segment
         // facing outwards from our original polygon.
-        return self.is_one_sided() &&
-            (self.1 == SegmentEnd::Left) == packet.up_faces_outwards;
+        self.is_one_sided() &&
+            (self.1 == SegmentEnd::Left) == packet.up_faces_outwards
     }
 }
 
@@ -853,11 +853,11 @@ type BoolSweepSegment = SweepSegment<RefCell<SegmentPacket>>;
 impl BoolSweepSegment {
     fn is_one_sided(&self) -> bool {
         let packet = self.data.borrow();
-        return packet.left_faces_polygons.none() || packet.right_faces_polygons.none();
+        packet.left_faces_polygons.none() || packet.right_faces_polygons.none()
     }
 }
 
-/** @brief compute several fields of left event le */
+/// @brief compute several fields of left event le
 fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
     // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
     {
@@ -942,7 +942,7 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
 /* Check whether a segment should be included in the final polygon */
 fn is_in_result(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
     let packet = segment.data.borrow();
-    return match packet.edge_type {
+    match packet.edge_type {
         EdgeType::Normal => match operation {
             BooleanOpType::Intersection => ! packet.is_outside_other_poly,
             BooleanOpType::Union => packet.is_outside_other_poly,
@@ -971,7 +971,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 
     match intersect_segments(&seg1.segment(), &seg2.segment()) {
         SegmentIntersection::None => {
-            return (0, None, None);
+            (0, None, None)
         }
         SegmentIntersection::Point(intersection) => {
             if seg1.left_point == seg2.left_point || seg1.right_point == seg2.right_point {
@@ -995,7 +995,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 None
             };
 
-            return (1, pt1, pt2);
+            (1, pt1, pt2)
         }
         SegmentIntersection::Segment(a, b) => {
             if seg1.data.borrow().polygon_index == seg2.data.borrow().polygon_index {
@@ -1116,12 +1116,11 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     // TODO it does slightly bug me that this is slightly inefficient but, eh? i GUESS i could
     // track the endpoints everywhere, or even just pass both pairs of points around??
     let next_point = current_endpoint.other_point();
-    let mut start_index;
-    if current_endpoint.1 == SegmentEnd::Left {
-        start_index = current_endpoint.0.data.borrow().right_index;
+    let mut start_index = if current_endpoint.1 == SegmentEnd::Left {
+        current_endpoint.0.data.borrow().right_index
     }
     else {
-        start_index = current_endpoint.0.data.borrow().left_index;
+        current_endpoint.0.data.borrow().left_index
     };
 
     while start_index > 0 && included_endpoints[start_index - 1].point() == next_point {
@@ -1368,12 +1367,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     );
 
 
-    loop {
-        // Grab the next endpoint, or bail if we've run out
-        let Reverse(SweepEndpoint(mut segment, end)) = match endpoint_queue.pop() {
-            Some(item) => item,
-            None => break,
-        };
+    // Grab the next endpoint, or bail if we've run out
+    while let Some(Reverse(SweepEndpoint(mut segment, end))) = endpoint_queue.pop() {
         if SPEW {
             println!("");
             println!("LOOP ITERATION: {:?} of #{:?}[{}] {:?} -> {:?}", end, segment.index, segment.order, segment.left_point, segment.right_point);
@@ -1583,7 +1578,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
 
         // Walk around looking for a polygon until we come back to the starting point
         let mut contour = Contour::new();
-        let contourId = final_polygon.contours.len();
+        let contour_id = final_polygon.contours.len();
         let starting_point = segment.left_point;
         contour.from_polygons = match end {
             SegmentEnd::Left => segment.data.borrow().left_faces_polygons.clone(),
@@ -1591,17 +1586,17 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         };
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
-        println!("building contour {} from #{} {:?} {:?}", contourId, segment.index, end, starting_point);
+        println!("building contour {} from #{} {:?} {:?}", contour_id, segment.index, end, starting_point);
         loop {
             current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
             {
                 let mut packet = current_segment.data.borrow_mut();
                 if current_endpoint.1 == SegmentEnd::Left {
-                    packet.left_contour_id = Some(contourId);
+                    packet.left_contour_id = Some(contour_id);
                 }
                 else {
-                    packet.right_contour_id = Some(contourId);
+                    packet.right_contour_id = Some(contour_id);
                 }
                 packet.result_in_out = current_endpoint.1 == SegmentEnd::Right;
             }
@@ -1626,7 +1621,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         // TODO maybe everything should just be counterclockwise?  but then how do i track
         // whether i'm "inside" or "outside"?
         // XXX can this happen for two-sided lines as well?
-        if final_polygon[contourId].clockwise() {
+        if final_polygon[contour_id].clockwise() {
             let &SweepEndpoint(segment, end) = current_endpoint;
 
             if let Some(below_segment_id) = segment.data.borrow().below_in_result {
@@ -1634,8 +1629,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 let below_segment = &segment_order[below_segment_id];
                 let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
                 println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
-                final_polygon[parent_contour_id].addHole(contourId);
-                final_polygon[contourId].setExternal(false);
+                final_polygon[parent_contour_id].addHole(contour_id);
+                final_polygon[contour_id].setExternal(false);
             }
             else {
                 println!("!!! can't find the counter i'm a hole of");
@@ -1659,5 +1654,5 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         }
     }
 
-    return final_polygon;
+    final_polygon
 }

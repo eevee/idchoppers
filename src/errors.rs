@@ -34,9 +34,7 @@ error_chain! {
 }
 
 
-// TODO wait, i don't want this to be public, but i want the rest of the crate to be able to use
-// it??
-pub fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResult<&[u8], O>) -> Result<O> {
+pub(crate) fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResult<&[u8], O>) -> Result<O> {
     /*
     if let IResult::Done(_, value) = result {
         return Ok(value);
@@ -48,7 +46,7 @@ pub fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResult<&[u8
     */
     match result {
         IResult::Done(_, value) => {
-            return Ok(value);
+            Ok(value)
         }
         IResult::Incomplete(_) => {
             bail!(ErrorKind::TruncatedData(whence));
@@ -73,12 +71,12 @@ pub fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResult<&[u8
 
 
 use std::collections::HashMap;
-pub fn display_error<O>(input: &[u8], res: IResult<&[u8],O>) {
-  let mut h: HashMap<u32, &str> = HashMap::new();
+pub fn display_error<O>(input: &[u8], res: IResult<&[u8], O>) {
+    let mut h: HashMap<u32, &str> = HashMap::new();
 
-  if let Some(v) = prepare_errors(input, res) {
-    let colors = generate_colors(&v);
-    println!("parsers: {}", print_codes(colors, h));
-    println!("{}",   print_offsets(input, 0, &v));
-  }
+    if let Some(v) = prepare_errors(input, res) {
+        let colors = generate_colors(&v);
+        println!("parsers: {}", print_codes(colors, h));
+        println!("{}", print_offsets(input, 0, &v));
+    }
 }

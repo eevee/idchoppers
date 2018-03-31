@@ -36,7 +36,7 @@ pub struct Map {
 
 impl Map {
     pub fn new() -> Self {
-        return Map {
+        Map {
             lines: Vec::new(),
             sides: Vec::new(),
             sectors: Vec::new(),
@@ -44,7 +44,7 @@ impl Map {
             vertices: Vec::new(),
 
             bbox: None,
-        };
+        }
     }
     pub fn from_bare(bare_map: &BareDoomMap) -> Self {
         let mut map = Map::new();
@@ -86,7 +86,7 @@ impl Map {
             });
         }
 
-        return map;
+        map
     }
 
     fn side_mut(&mut self, handle: Handle<Side>) -> &mut Side {
@@ -98,7 +98,7 @@ impl Map {
 
     fn add_sector(&mut self) -> Handle<Sector> {
         self.sectors.push(Sector{ special: 0, tag: 0, floor_height: 0, ceiling_height: 0 });
-        return (self.sectors.len() - 1).into();
+        (self.sectors.len() - 1).into()
     }
     fn add_side(&mut self, sector: Handle<Sector>) -> Handle<Side> {
         self.sides.push(Side{
@@ -108,7 +108,7 @@ impl Map {
             upper_texture: "".into(),
             sector: sector,
         });
-        return (self.sides.len() - 1).into();
+        (self.sides.len() - 1).into()
     }
     fn add_vertex(&mut self, x: f64, y: f64) {
         self.vertices.push(Vertex{ x, y });
@@ -124,37 +124,37 @@ impl Map {
             front: None,
             back: None,
         });
-        return (self.lines.len() - 1).into();
+        (self.lines.len() - 1).into()
     }
 
     pub fn iter_lines(&self) -> <Vec<BoundLine> as IntoIterator>::IntoIter {
         let bound: Vec<_> = self.lines.iter().map(|a| BoundLine(a, self)).collect();
-        return bound.into_iter();
+        bound.into_iter()
 //        return self.lines.iter().map(|a| BoundLine(a, self));
     }
     pub fn iter_sectors(&self) -> std::slice::Iter<Sector> {
-        return self.sectors.iter();
+        self.sectors.iter()
     }
     pub fn iter_things(&self) -> std::slice::Iter<Thing> {
-        return self.things.iter();
+        self.things.iter()
     }
 
     pub fn vertex(&self, handle: Handle<Vertex>) -> &Vertex {
-        return &self.vertices[handle.0];
+        &self.vertices[handle.0]
     }
 
     pub fn side(&self, handle: Handle<Side>) -> &Side {
-        return &self.sides[handle.0];
+        &self.sides[handle.0]
     }
 
     pub fn sector(&self, handle: Handle<Sector>) -> &Sector {
-        return &self.sectors[handle.0];
+        &self.sectors[handle.0]
     }
 
     pub fn bbox(&self) -> Rect {
         // TODO ah heck, should include Things too
         let points: Vec<_> = self.vertices.iter().map(|v| Point::new(v.x, v.y)).collect();
-        return Rect::from_points(points.iter());
+        Rect::from_points(points.iter())
     }
 
     pub fn find_player_start(&self) -> Option<Point> {
@@ -163,7 +163,7 @@ impl Map {
                 return Some(thing.point());
             }
         }
-        return None;
+        None
     }
 
     pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<Point>> {
@@ -180,7 +180,7 @@ impl Map {
         struct VertexRef<'a>(&'a Vertex);
         impl<'a> PartialEq for VertexRef<'a> {
             fn eq(&self, other: &VertexRef) -> bool {
-                return (self.0 as *const _) == (other.0 as *const _);
+                (self.0 as *const _) == (other.0 as *const _)
             }
         }
         impl<'a> Eq for VertexRef<'a> {}
@@ -215,12 +215,12 @@ impl Map {
                     let v0 = &self.vertices[line.start.0];
                     let v1 = &self.vertices[line.end.0];
                     let edge = Edge{
-                        line: line,
-                        side: side,
-                        facing: facing,
+                        line,
+                        side,
+                        facing,
                         // TODO should these be swapped depending on the line facing?
-                        v0: v0,
-                        v1: v1,
+                        v0,
+                        v1,
                         done: false,
                     };
                     edges.push(edge);
@@ -247,7 +247,7 @@ impl Map {
                     break;
                 }
             }
-            if next_vertices.len() == 0 {
+            if next_vertices.is_empty() {
                 break;
             }
 
@@ -291,7 +291,7 @@ impl Map {
             }
         }
 
-        return outlines;
+        outlines
     }
 }
 
@@ -307,7 +307,7 @@ pub struct Handle<T>(usize, PhantomData<*const T>);
 // same trait, but we don't actually own a T, so that bound is unnecessary.
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
-        return Handle(self.0, PhantomData);
+        Handle(self.0, PhantomData)
     }
 }
 
@@ -329,7 +329,7 @@ impl<T> std::hash::Hash for Handle<T> {
 
 impl<T> From<usize> for Handle<T> {
     fn from(index: usize) -> Self {
-        return Handle(index, PhantomData);
+        Handle(index, PhantomData)
     }
 }
 
@@ -342,11 +342,11 @@ pub struct Thing {
 
 impl Thing {
     pub fn point(&self) -> Point {
-        return self.point;
+        self.point
     }
 
     pub fn doomednum(&self) -> u32 {
-        return self.doomednum;
+        self.doomednum
     }
 }
 
@@ -362,27 +362,27 @@ pub struct Line {
 
 impl Line {
     pub fn vertex_indices(&self) -> (Handle<Vertex>, Handle<Vertex>) {
-        return (self.start, self.end);
+        (self.start, self.end)
     }
 
     pub fn side_indices(&self) -> (Option<Handle<Side>>, Option<Handle<Side>>) {
-        return (self.front, self.back);
+        (self.front, self.back)
     }
 
     pub fn has_special(&self) -> bool {
-        return self.special != 0;
+        self.special != 0
     }
 
     pub fn blocks_player(&self) -> bool {
-        return self.flags & 1 != 0;
+        self.flags & 1 != 0
     }
 
     pub fn is_one_sided(&self) -> bool {
-        return self.front.is_some() != self.back.is_some();
+        self.front.is_some() != self.back.is_some()
     }
 
     pub fn is_two_sided(&self) -> bool {
-        return self.front.is_some() && self.back.is_some();
+        self.front.is_some() && self.back.is_some()
     }
 }
 
@@ -390,20 +390,20 @@ impl Line {
 #[derive(Clone, Copy)]
 pub struct BoundLine<'a>(&'a Line, &'a Map);
 impl<'a> BoundLine<'a> {
-    pub fn start(&self) -> &'a Vertex {
-        return self.1.vertex(self.0.start);
+    pub fn start(&self) -> &Vertex {
+        self.1.vertex(self.0.start)
     }
 
-    pub fn end(&self) -> &'a Vertex {
-        return self.1.vertex(self.0.end);
+    pub fn end(&self) -> &Vertex {
+        self.1.vertex(self.0.end)
     }
 
-    pub fn front(&self) -> Option<&'a Side> {
-        return self.0.front.map(|s| self.1.side(s));
+    pub fn front(&self) -> Option<&Side> {
+        self.0.front.map(|s| self.1.side(s))
     }
 
-    pub fn back(&self) -> Option<&'a Side> {
-        return self.0.back.map(|s| self.1.side(s));
+    pub fn back(&self) -> Option<&Side> {
+        self.0.back.map(|s| self.1.side(s))
     }
 
     // TODO these are all delegates, eugh
@@ -442,19 +442,19 @@ pub struct Sector {
 
 impl Sector {
     pub fn tag(&self) -> u32 {
-        return self.tag;
+        self.tag
     }
 
     pub fn special(&self) -> u32 {
-        return self.special;
+        self.special
     }
 
     pub fn floor_height(&self) -> i32 {
-        return self.floor_height;
+        self.floor_height
     }
 
     pub fn ceiling_height(&self) -> i32 {
-        return self.ceiling_height;
+        self.ceiling_height
     }
 }
 

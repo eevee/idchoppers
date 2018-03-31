@@ -65,10 +65,10 @@ pub fn lookup_thing_type(doomednum: u32) -> Option<&'static ActorType> {
             }
         }
     }
-    return None;
+    None
 }
 
-pub static DOOM1_FLATS: [&'static str; 107] = [
+pub static DOOM1_FLATS: [&str; 107] = [
     "FLOOR0_1", "FLOOR0_3", "FLOOR0_6", "FLOOR1_1", "FLOOR1_7", "FLOOR3_3", "FLOOR4_1", "FLOOR4_5",
     "FLOOR4_6", "FLOOR4_8", "FLOOR5_1", "FLOOR5_2", "FLOOR5_3", "FLOOR5_4", "STEP1", "STEP2",
     "FLOOR6_1", "FLOOR6_2", "TLITE6_1", "TLITE6_4", "TLITE6_5", "TLITE6_6", "FLOOR7_1", "FLOOR7_2",
@@ -84,7 +84,7 @@ pub static DOOM1_FLATS: [&'static str; 107] = [
     "FLAT9", "FLAT17", "FLAT19", "COMP01",
 ];
 
-pub static DOOM1_TEXTURES: [&'static str; 125] = [
+pub static DOOM1_TEXTURES: [&str; 125] = [
     "AASTINKY", "BIGDOOR1", "BIGDOOR2", "BIGDOOR4", "BRNBIGC", "BRNBIGL", "BRNBIGR", "BRNPOIS",
     "BRNPOIS2", "BRNSMAL1", "BRNSMAL2", "BRNSMALC", "BRNSMALL", "BRNSMALR", "BROWN1", "BROWN144",
     "BROWN96", "BROWNGRN", "BROWNHUG", "BROWNPIP", "COMP2", "COMPSPAN", "COMPSTA1", "COMPSTA2",
@@ -103,7 +103,7 @@ pub static DOOM1_TEXTURES: [&'static str; 125] = [
     "TEKWALL4", "TEKWALL5",
 ];
 
-pub static DOOM2_FLATS: [&'static str; 147] = [
+pub static DOOM2_FLATS: [&str; 147] = [
     "FLOOR0_1", "FLOOR0_3", "FLOOR0_6", "FLOOR1_1", "FLOOR1_7", "FLOOR3_3", "FLOOR4_1", "FLOOR4_5",
     "FLOOR4_6", "FLOOR4_8", "FLOOR5_1", "FLOOR5_2", "FLOOR5_3", "FLOOR5_4", "STEP1", "STEP2",
     "FLOOR6_1", "FLOOR6_2", "TLITE6_1", "TLITE6_4", "TLITE6_5", "TLITE6_6", "FLOOR7_1", "FLOOR7_2",
@@ -124,7 +124,7 @@ pub static DOOM2_FLATS: [&'static str; 147] = [
     "SLIME14", "SLIME15", "SLIME16",
 ];
 
-pub static DOOM2_TEXTURES: [&'static str; 428] = [
+pub static DOOM2_TEXTURES: [&str; 428] = [
     "AASHITTY", "ASHWALL2", "ASHWALL3", "ASHWALL4", "ASHWALL6", "ASHWALL7", "BFALL1", "BFALL2",
     "BFALL3", "BFALL4", "BIGBRIK1", "BIGBRIK2", "BIGBRIK3", "BIGDOOR1", "BIGDOOR2", "BIGDOOR3",
     "BIGDOOR4", "BIGDOOR5", "BIGDOOR6", "BIGDOOR7", "BLAKWAL1", "BLAKWAL2", "BLODRIP1", "BLODRIP2",

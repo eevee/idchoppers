@@ -242,16 +242,10 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
         // as well the same ways, albeit with an extra vertex.)
-        let top;
-        let bottom;
-        if v0.y > v1.y {
-            top = v0;
-            bottom = v1;
-        }
-        else {
-            top = v1;
-            bottom = v0;
-        }
+        let (top, bottom) =
+            if v0.y > v1.y { (v0, v1) }
+            else           { (v1, v0) }
+        ;
         if top.x < bottom.x {
             // Down and to the right: start with the bottom-left corner of the top box
             data = data
@@ -346,10 +340,10 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
     // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
     // the <svg> element, hence the need for this group.)
     group.assign("transform", "scale(1 -1)");
-    return Document::new()
+    Document::new()
         .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(group);
+        .add(group)
 }
 
 fn map_as_svg(map: &Map) -> Document {
@@ -442,10 +436,10 @@ fn map_as_svg(map: &Map) -> Document {
     // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
     // the <svg> element, hence the need for this group.)
     group.assign("transform", "scale(1 -1)");
-    return Document::new()
+    Document::new()
         .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(group);
+        .add(group)
 }
 
 fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {

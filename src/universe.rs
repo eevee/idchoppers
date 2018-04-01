@@ -34,7 +34,7 @@ pub struct ActorType {
     pub reactiontime: u32,
     pub attacksound: Option<&'static str>,
     //painstate: S_PLAY_PAIN,
-    pub painchance: u8,
+    pub painchance: u16,
     pub painsound: Option<&'static str>,
     //meleestate: S_NULL,
     //missilestate: S_PLAY_ATK1,

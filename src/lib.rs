@@ -201,11 +201,11 @@ impl<'n> BareWAD<'n> {
 
     pub fn to_archive(&self) -> WADArchive {
         let entries = self.directory.iter()
-        	.map(|bare_entry| WADEntry{
-        		name: Cow::from(bare_entry.name),
-        		data: Cow::from(bare_entry.extract_slice(self.buffer))
-    		})
-        	.collect();
+            .map(|bare_entry| WADEntry{
+                name: Cow::from(bare_entry.name),
+                data: Cow::from(bare_entry.extract_slice(self.buffer))
+            })
+            .collect();
         WADArchive{
             buffer: self.buffer,
             wadtype: self.header.identification,
@@ -315,8 +315,8 @@ fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
         return IResult::Incomplete(Needed::Size(len));
     }
 
-	for (i, &c) in input.iter().enumerate() {
-    	match c {
+    for i in 0..len {
+        match input[i] {
             0 => {
                 // This is the end
                 let s = unsafe { str::from_utf8_unchecked(&input[..i]) };

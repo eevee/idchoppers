@@ -110,7 +110,6 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
-                /*
                 let full_map = idchoppers::map::Map::from_bare(&map);
                 println!("");
                 println!("{} - Doom format map", map_range.name);
@@ -125,7 +124,6 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
                 for line in map.lines {
 
                 }
-                */
             }
             idchoppers::BareMap::Hexen(map) => {
                 println!("{} - Hexen format map", map_range.name);

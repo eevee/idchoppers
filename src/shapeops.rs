@@ -681,8 +681,8 @@ impl Polygon {
         let capacity = self.contours.len();
         let mut processed = Vec::with_capacity(capacity);
         processed.resize(capacity, false);
-        let mut holeOf = Vec::with_capacity(capacity);
-        holeOf.resize(capacity, None);
+        let mut hole_of = Vec::with_capacity(capacity);
+        hole_of.resize(capacity, None);
         let mut nprocessed = 0;
         for &SweepEndpoint(segment, end) in &endpoints {
             // Stop if we've seen every contour
@@ -718,7 +718,7 @@ impl Polygon {
             let (prev_contour_id, prev_segment_id) = prev_segment.data;
 
             if ! prev_segment.faces_outwards {
-                holeOf[contour_id] = Some(prev_contour_id);
+                hole_of[contour_id] = Some(prev_contour_id);
                 self.contours[contour_id].setExternal(false);
                 self.contours[prev_contour_id].addHole(contour_id);
                 if self.contours[prev_contour_id].counterclockwise() {
@@ -728,8 +728,8 @@ impl Polygon {
                     self.contours[contour_id].setCounterClockwise();
                 }
             }
-            else if let Some(parent) = holeOf[prev_contour_id] {
-                holeOf[contour_id] = Some(parent);
+            else if let Some(parent) = hole_of[prev_contour_id] {
+                hole_of[contour_id] = Some(parent);
                 self.contours[contour_id].setExternal(false);
                 self.contours[parent].addHole(contour_id);
                 if self.contours[parent].counterclockwise() {

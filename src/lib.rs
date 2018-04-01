@@ -88,7 +88,7 @@ pub enum MapFormat {
 
 
 
-named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
+named!(exmy_map_name<MapName>, do_parse!(
     tag!(b"E") >>
     e: digit >>
     tag!(b"M") >>
@@ -101,7 +101,7 @@ named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
     ))
 ));
 
-named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
+named!(mapxx_map_name<MapName>, do_parse!(
     tag!(b"MAP") >>
     xx: digit >>
     eof!() >>
@@ -111,7 +111,7 @@ named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
     ))
 ));
 
-named!(vanilla_map_name(&[u8]) -> MapName, alt!(exmy_map_name | mapxx_map_name));
+named!(vanilla_map_name<MapName>, alt!(exmy_map_name | mapxx_map_name));
 
 
 #[derive(Copy, Clone, Debug)]

@@ -322,7 +322,7 @@ fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
                 let s = unsafe { str::from_utf8_unchecked(&input[..i]) };
                 return IResult::Done(&input[len..], s);
             }
-            32 ... 128 => {
+            32 ... 126 => {
                 // OK
             }
             _ => {

@@ -1,7 +1,6 @@
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::iter::repeat;
-use std::cmp::Ordering::Equal;
 
 extern crate bit_vec;
 use bit_vec::BitVec;
@@ -105,7 +104,9 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {
-        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        use std::cmp::Ordering::Equal;
+        
+        let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
@@ -136,16 +137,14 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
     }
     println!("---");
 
-    let texture_entries;
-    if let Some(texbuf) = wad.first_entry("TEXTURE1") {
-        texture_entries = try!(idchoppers::parse_texturex_names(texbuf));
-    }
-    else if let Some(texbuf) = wad.first_entry("TEXTURE2") {
-        texture_entries = try!(idchoppers::parse_texturex_names(texbuf));
-    }
-    else {
-        texture_entries = vec![];
-    }
+    let texture_entries =
+        if let Some(texbuf) = wad.first_entry("TEXTURE1").or(wad.first_entry("TEXTURE2")) {
+            idchoppers::parse_texturex_names(texbuf)?
+        }
+        else {
+            vec![]
+        }
+    ;
     for entry in texture_entries.iter() {
         println!("{}", entry.name);
     }
@@ -155,8 +154,7 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
 fn do_chart(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
-        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
-        match bare_map {
+        match idchoppers::parse_doom_map(&wad, &map_range)? {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
                 let fullmap = Map::from_bare(&map);
@@ -177,23 +175,18 @@ fn do_chart(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
 
 fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing>(map: &idchoppers::BareBinaryMap<L, T>) -> Document {
     let mut group = Group::new();
-    let mut minx;
-    let mut miny;
-    if let Some(vertex) = map.vertices.first() {
-        minx = vertex.x;
-        miny = vertex.y;
-    }
-    else if let Some(thing) = map.things.first() {
-        let (x, y) = thing.coords();
-        minx = x;
-        miny = y;
-    }
-    else {
-        minx = 0;
-        miny = 0;
-    }
-    let mut maxx = minx;
-    let mut maxy = miny;
+    let (mut minx, mut miny) =
+        if let Some(vertex) = map.vertices.first() {
+            (vertex.x, vertex.y)
+        }
+        else if let Some(thing) = map.things.first() {
+            thing.coords()
+        }
+        else {
+            (0, 0)
+        }
+    ;
+    let (mut maxx, mut maxy) = (minx, miny);
 
     for vertex in map.vertices.iter() {
         if vertex.x < minx {
@@ -249,16 +242,10 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
         // as well the same ways, albeit with an extra vertex.)
-        let top;
-        let bottom;
-        if v0.y > v1.y {
-            top = v0;
-            bottom = v1;
-        }
-        else {
-            top = v1;
-            bottom = v0;
-        }
+        let (top, bottom) =
+            if v0.y > v1.y { (v0, v1) }
+            else           { (v1, v0) }
+        ;
         if top.x < bottom.x {
             // Down and to the right: start with the bottom-left corner of the top box
             data = data
@@ -353,10 +340,10 @@ fn bare_map_as_svg<L: idchoppers::BareBinaryLine, T: idchoppers::BareBinaryThing
     // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
     // the <svg> element, hence the need for this group.)
     group.assign("transform", "scale(1 -1)");
-    return Document::new()
+    Document::new()
         .set("viewBox", (minx, -maxy, maxx - minx, maxy - miny))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(group);
+        .add(group)
 }
 
 fn map_as_svg(map: &Map) -> Document {
@@ -449,10 +436,10 @@ fn map_as_svg(map: &Map) -> Document {
     // everywhere we write them, just flip the entire map.  (WebKit doesn't support "transform" on
     // the <svg> element, hence the need for this group.)
     group.assign("transform", "scale(1 -1)");
-    return Document::new()
+    Document::new()
         .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
-        .add(group);
+        .add(group)
 }
 
 fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
@@ -460,7 +447,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
     let mut directory = Vec::new();
     let mut filepos: usize = 0;
     for map_range in wad.iter_maps() {
-        let mut bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        let mut bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         if let idchoppers::BareMap::Doom(mut map) = bare_map {
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -472,7 +459,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
             for thing in map.things.iter_mut() {
                 thing.y = -thing.y;
                 thing.angle = -thing.angle;
-                thing.write_to(&mut buffer);
+                thing.write_to(&mut buffer)?;
             }
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -484,7 +471,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
             // Lines
             for line in map.lines.iter_mut() {
                 std::mem::swap(&mut line.v0, &mut line.v1);
-                line.write_to(&mut buffer);
+                line.write_to(&mut buffer)?;
             }
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -495,7 +482,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
             // Sides
             for side in map.sides.iter_mut() {
-                side.write_to(&mut buffer);
+                side.write_to(&mut buffer)?;
             }
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -507,7 +494,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
             // Vertices
             for vertex in map.vertices.iter_mut() {
                 vertex.y = -vertex.y;
-                vertex.write_to(&mut buffer);
+                vertex.write_to(&mut buffer)?;
             }
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -518,7 +505,7 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
             // Sectors
             for sector in map.sectors.iter_mut() {
-                sector.write_to(&mut buffer);
+                sector.write_to(&mut buffer)?;
             }
             directory.push(idchoppers::BareWADDirectoryEntry{
                 filepos: (filepos + 12) as u32,
@@ -530,18 +517,18 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
             println!("{} - Doom format map", map_range.name);
         }
     }
-    let mut f = try!(File::create("flipped.wad"));
-    try!(f.write("PWAD".as_bytes()));
-    try!(f.write_u32::<LittleEndian>(directory.len() as u32));
-    try!(f.write_u32::<LittleEndian>((12 + buffer.len()) as u32));
-    try!(f.write_all(&buffer[..]));
+    let mut f = File::create("flipped.wad")?;
+    f.write("PWAD".as_bytes())?;
+    f.write_u32::<LittleEndian>(directory.len() as u32)?;
+    f.write_u32::<LittleEndian>((12 + buffer.len()) as u32)?;
+    f.write_all(&buffer[..])?;
     for entry in directory.iter() {
         println!("{:?}", entry);
-        try!(f.write_u32::<LittleEndian>(entry.filepos));
-        try!(f.write_u32::<LittleEndian>(entry.size));
-        try!(f.write(entry.name.as_bytes()));
+        f.write_u32::<LittleEndian>(entry.filepos)?;
+        f.write_u32::<LittleEndian>(entry.size)?;
+        f.write(entry.name.as_bytes())?;
         for _ in entry.name.len() .. 8 {
-            try!(f.write(&[0]));
+            f.write(&[0])?;
         }
     }
 
@@ -552,10 +539,9 @@ fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
 
 
-use idchoppers::shapeops;
-use idchoppers::shapeops::MapPoint;
+use idchoppers::shapeops::{self, MapPoint};
 fn do_shapeops() -> Result<()> {
-    let mut poly1 = idchoppers::shapeops::Polygon::new();
+    let mut poly1 = shapeops::Polygon::new();
     for points in [
         [(0., 0.), (0., 64.), (32., 64.), (32., 0.)],
         //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
@@ -565,8 +551,8 @@ fn do_shapeops() -> Result<()> {
         //[(0., 0.), (0., 64.), (64., 64.), (64., 0.)],
         //[(0., 32.), (0., 96.), (64., 96.), (64., 32.)],
     ].iter() {
-        let mut contour = idchoppers::shapeops::Contour::new();
-        contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
+        let mut contour = shapeops::Contour::new();
+        contour.points = points.iter().map(|&(x, y)| shapeops::MapPoint::new(x, y)).collect();
         poly1.contours.push(contour);
     }
     poly1.compute_holes();
@@ -574,7 +560,7 @@ fn do_shapeops() -> Result<()> {
         println!("contour cw? {} external? {} holes? {:?}", contour.clockwise(), contour.external(), contour.holes);
     }
 
-    let mut poly2 = idchoppers::shapeops::Polygon::new();
+    let mut poly2 = shapeops::Polygon::new();
     for points in [
         //[(32., 32.), (32., 80.), (80., 32.)],
         // [(56., 32.), (56., 80.), (104., 32.)],
@@ -584,8 +570,8 @@ fn do_shapeops() -> Result<()> {
         //[(64., 32.), (64., 96.), (128., 96.), (128., 32.)],
         //[(64., 0.), (64., 64.), (128., 64.), (128., 0.)],
     ].iter() {
-        let mut contour = idchoppers::shapeops::Contour::new();
-        contour.points = points.iter().map(|&(x, y)| idchoppers::shapeops::MapPoint::new(x, y)).collect();
+        let mut contour = shapeops::Contour::new();
+        contour.points = points.iter().map(|&(x, y)| shapeops::MapPoint::new(x, y)).collect();
         poly2.contours.push(contour);
     }
 
@@ -595,7 +581,7 @@ fn do_shapeops() -> Result<()> {
     println!("bboxes: {:?}, {:?} / {:?} {:?}", poly1.bbox(), poly2.bbox(), poly1.bbox().intersects(&poly2.bbox()), poly1.bbox().intersection(&poly2.bbox()));
     /*
     println!("ok now my test sweep");
-    let results = idchoppers::shapeops::test_sweep(vec![
+    let results = shapeops::test_sweep(vec![
         (MapPoint::new(0., 0.), MapPoint::new(16., 8.)),
         (MapPoint::new(4., 0.), MapPoint::new(8., 8.)),
         (MapPoint::new(8., 0.), MapPoint::new(12., 8.)),
@@ -605,8 +591,8 @@ fn do_shapeops() -> Result<()> {
     }
     */
 
-    let mut poly3 = idchoppers::shapeops::Polygon::new();
-    let mut contour = idchoppers::shapeops::Contour::new();
+    let mut poly3 = shapeops::Polygon::new();
+    let mut contour = shapeops::Contour::new();
     contour.points = vec![
         MapPoint::new(0., 0.),
         MapPoint::new(64., 0.),
@@ -614,7 +600,7 @@ fn do_shapeops() -> Result<()> {
         MapPoint::new(0., 32.),
     ];
     poly3.contours.push(contour);
-    let result = idchoppers::shapeops::compute(&vec![poly1, poly2, poly3], idchoppers::shapeops::BooleanOpType::Union);
+    let result = shapeops::compute(&vec![poly1, poly2, poly3], shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
     let mut doc = Document::new()
@@ -645,9 +631,9 @@ fn do_shapeops() -> Result<()> {
             .set("font-size", 8)
         );
     }
-    svg::save("idchoppers-shapeops.svg", &doc);
+    svg::save("idchoppers-shapeops.svg", &doc)?;
 
-    return Ok(());
+    Ok(())
 }
 
 
@@ -660,7 +646,7 @@ fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
             }
         }
         */
-        let bare_map = try!(idchoppers::parse_doom_map(&wad, &map_range));
+        let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
@@ -703,10 +689,10 @@ fn route_map_as_svg(map: &Map) -> Document {
     //let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
 
     for (s, sector) in map.iter_sectors().enumerate() {
-        let mut polygon = idchoppers::shapeops::Polygon::new();
+        let mut polygon = shapeops::Polygon::new();
         for points in map.sector_to_polygons(s).iter() {
             println!("{} {:?}", s, points);
-            let mut contour = idchoppers::shapeops::Contour::new();
+            let mut contour = shapeops::Contour::new();
             contour.points = points.iter().map(|p| MapPoint::new(p.x as f64, p.y as f64)).collect();
             polygon.contours.push(contour);
         }
@@ -716,8 +702,8 @@ fn route_map_as_svg(map: &Map) -> Document {
 
     let mut void_polygons = BitVec::from_elem(polygons.len(), false);
     for line in map.iter_lines() {
-        let mut polygon = idchoppers::shapeops::Polygon::new();
-        let mut contour = idchoppers::shapeops::Contour::new();
+        let mut polygon = shapeops::Polygon::new();
+        let mut contour = shapeops::Contour::new();
         let mut classes = vec!["line"];
 
         let (frontid, backid) = line.side_indices();
@@ -748,37 +734,31 @@ fn route_map_as_svg(map: &Map) -> Document {
         // Always start with the top vertex.  The player is always a square AABB, which yields
         // two cases: down-right or down-left.  (Vertical or horizontal lines can be expressed just
         // as well the same ways, albeit with an extra vertex.)
-        let top;
-        let bottom;
-        if v0.y > v1.y {
-            top = v0;
-            bottom = v1;
-        }
-        else {
-            top = v1;
-            bottom = v0;
-        }
-        let Pt = |x, y| MapPoint::new(x as f64, y as f64);
+        let (top, bottom) =
+            if v0.y > v1.y { (v0, v1) }
+            else           { (v1, v0) }
+        ;
+        let pt = |x, y| MapPoint::new(x as f64, y as f64);
         if top.x < bottom.x {
             // Down and to the right: start with the bottom-left corner of the top box
             contour.points = vec![
-                Pt(top.x - radius, top.y - radius),
-                Pt(top.x - radius, top.y + radius),
-                Pt(top.x + radius, top.y + radius),
-                Pt(bottom.x + radius, bottom.y + radius),
-                Pt(bottom.x + radius, bottom.y - radius),
-                Pt(bottom.x - radius, bottom.y - radius),
+                pt(top.x - radius, top.y - radius),
+                pt(top.x - radius, top.y + radius),
+                pt(top.x + radius, top.y + radius),
+                pt(bottom.x + radius, bottom.y + radius),
+                pt(bottom.x + radius, bottom.y - radius),
+                pt(bottom.x - radius, bottom.y - radius),
             ];
         }
         else {
             // Down and to the left: start with the top-left corner of the top box
             contour.points = vec![
-                Pt(top.x - radius, top.y + radius),
-                Pt(top.x + radius, top.y + radius),
-                Pt(top.x + radius, top.y - radius),
-                Pt(bottom.x + radius, bottom.y - radius),
-                Pt(bottom.x - radius, bottom.y - radius),
-                Pt(bottom.x - radius, bottom.y + radius),
+                pt(top.x - radius, top.y + radius),
+                pt(top.x + radius, top.y + radius),
+                pt(top.x + radius, top.y - radius),
+                pt(bottom.x + radius, bottom.y - radius),
+                pt(bottom.x - radius, bottom.y - radius),
+                pt(bottom.x - radius, bottom.y + radius),
             ];
         }
         polygon.contours.push(contour);
@@ -788,7 +768,7 @@ fn route_map_as_svg(map: &Map) -> Document {
 
     let start = map.find_player_start().unwrap_or(MapPoint::new(0., 0.));
 
-    let result = idchoppers::shapeops::compute(&polygons, idchoppers::shapeops::BooleanOpType::Union);
+    let result = shapeops::compute(&polygons, shapeops::BooleanOpType::Union);
     let mut void_contours = BTreeSet::new();
     let mut seen_contours = BTreeSet::new();
     let mut next_contours = Vec::new();
@@ -929,9 +909,9 @@ fn route_map_as_svg(map: &Map) -> Document {
     // the <svg> element, hence the need for this group.)
     map_group.assign("transform", "scale(1 -1)");
     group.assign("transform", "scale(1 -1)");
-    return Document::new()
+    Document::new()
         .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
         .add(Style::new(include_str!("map-svg.css")))
         .add(map_group)
-        .add(group);
+        .add(group)
 }

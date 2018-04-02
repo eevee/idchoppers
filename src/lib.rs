@@ -88,7 +88,7 @@ pub enum MapFormat {
 
 
 
-named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
+named!(exmy_map_name<MapName>, do_parse!(
     tag!(b"E") >>
     e: digit >>
     tag!(b"M") >>
@@ -101,7 +101,7 @@ named!(exmy_map_name(&[u8]) -> MapName, do_parse!(
     ))
 ));
 
-named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
+named!(mapxx_map_name<MapName>, do_parse!(
     tag!(b"MAP") >>
     xx: digit >>
     eof!() >>
@@ -111,7 +111,7 @@ named!(mapxx_map_name(&[u8]) -> MapName, do_parse!(
     ))
 ));
 
-named!(vanilla_map_name(&[u8]) -> MapName, alt!(exmy_map_name | mapxx_map_name));
+named!(vanilla_map_name<MapName>, alt!(exmy_map_name | mapxx_map_name));
 
 
 #[derive(Copy, Clone, Debug)]
@@ -176,10 +176,10 @@ impl<'a> WADArchive<'a> {
 // - warning: lumps not in the same order physically as in the listing
 // - interesting: lumps have gaps
 /// Low-level interface to a parsed WAD.  This is really only useful for, uh, shenanigans.
-pub struct BareWAD<'a> {
-    pub buffer: &'a [u8],
+pub struct BareWAD<'n> {
+    pub buffer: &'n [u8],
     pub header: BareWADHeader,
-    pub directory: Vec<BareWADDirectoryEntry<'a>>,
+    pub directory: Vec<BareWADDirectoryEntry<'n>>,
 }
 
 // TODO expand these into separate types, probably, so the severity can be an associated value...
@@ -192,30 +192,35 @@ pub enum Diagnostic {
     UnusedSpace,
 }
 
-impl<'a> BareWAD<'a> {
-    pub fn diagnose(&'a self) -> Vec<Diagnostic> {
+impl<'n> BareWAD<'n> {
+    pub fn diagnose(&self) -> Vec<Diagnostic> {
         let ret = vec![];
         // TODO this
-        return ret;
+        ret
     }
 
-    pub fn to_archive(&'a self) -> WADArchive<'a> {
-        let entries = self.directory.iter().map(|bare_entry| WADEntry{ name: Cow::from(bare_entry.name), data: Cow::from(bare_entry.extract_slice(self.buffer))} ).collect();
-        return WADArchive{
+    pub fn to_archive(&self) -> WADArchive {
+        let entries = self.directory.iter()
+            .map(|bare_entry| WADEntry{
+                name: Cow::from(bare_entry.name),
+                data: Cow::from(bare_entry.extract_slice(self.buffer))
+            })
+            .collect();
+        WADArchive{
             buffer: self.buffer,
             wadtype: self.header.identification,
-            entries: entries,
-        };
+            entries,
+        }
     }
 
-    pub fn entry_slice(&'a self, index: usize) -> &'a [u8] {
+    pub fn entry_slice(&self, index: usize) -> &[u8] {
         let entry = &self.directory[index];
         let start = entry.filepos as usize;
         let end = start + entry.size as usize;
-        return &self.buffer[start..end];
+        &self.buffer[start..end]
     }
 
-    pub fn first_entry(&'a self, name: &str) -> Option<&[u8]> {
+    pub fn first_entry(&self, name: &str) -> Option<&[u8]> {
         for entry in self.directory.iter() {
             if entry.name == name {
                 let start = entry.filepos as usize;
@@ -224,17 +229,21 @@ impl<'a> BareWAD<'a> {
                 return Some(&self.buffer[start..end]);
             }
         }
-        return None;
+        None
     }
 
-    pub fn iter_entries_between(&'a self, begin_marker: &'a str, end_marker: &'a str) -> BareWADBetweenIterator<'a> {
+    pub fn iter_entries_between(&self, begin_marker: &'n str, end_marker: &'n str) -> BareWADBetweenIterator {
         BareWADBetweenIterator{
             bare_wad: self,
             entry_iter: self.directory.iter(),
-            begin_marker: begin_marker,
-            end_marker: end_marker,
+            begin_marker,
+            end_marker,
             between_markers: false,
         }
+    }
+    
+    pub fn iter_maps(&self) -> WADMapIterator {
+        WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate().peekable() }
     }
 }
 pub struct BareWADBetweenIterator<'a> {
@@ -262,7 +271,7 @@ impl<'a> Iterator for BareWADBetweenIterator<'a> {
                 });
             }
         }
-        return None;
+        None
     }
 }
 
@@ -272,37 +281,36 @@ pub struct BareWADHeader {
     pub infotableofs: u32,
 }
 
-named!(iwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"IWAD") >> (WADType::IWAD)));
-named!(pwad_tag(&[u8]) -> WADType, do_parse!(tag!(b"PWAD") >> (WADType::PWAD)));
+named!(iwad_tag<WADType>, value!(WADType::IWAD, tag!(b"IWAD")));
+named!(pwad_tag<WADType>, value!(WADType::PWAD, tag!(b"PWAD")));
 
-named!(wad_header(&[u8]) -> BareWADHeader, do_parse!(
+named!(wad_header<BareWADHeader>, do_parse!(
     identification: return_error!(
         nom::ErrorKind::Custom(1),
         alt!(iwad_tag | pwad_tag)) >>
     numlumps: le_u32 >>
     infotableofs: le_u32 >>
-    (BareWADHeader{ identification: identification, numlumps: numlumps, infotableofs: infotableofs })
+    (BareWADHeader{ identification, numlumps, infotableofs })
 ));
 
 
 #[derive(Debug)]
-pub struct BareWADDirectoryEntry<'a> {
+pub struct BareWADDirectoryEntry<'name> {
     pub filepos: u32,
     pub size: u32,
-    pub name: &'a str,
+    pub name: &'name str,
 }
 
-impl<'a> BareWADDirectoryEntry<'a> {
+impl<'n> BareWADDirectoryEntry<'n> {
     /// Extract the slice described by this entry from a buffer.
-    pub fn extract_slice(&'a self, buf: &'a [u8]) -> &'a [u8] {
+    pub fn extract_slice<'b>(&self, buf: &'b [u8]) -> &'b [u8] {
         let start = self.filepos as usize;
         let end = start + self.size as usize;
-        return &buf[start..end];
+        &buf[start..end]
     }
 }
 
-fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
-    let mut input = input;
+fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
     if input.len() < len {
         return IResult::Incomplete(Needed::Size(len));
     }
@@ -314,7 +322,7 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
                 let s = unsafe { str::from_utf8_unchecked(&input[..i]) };
                 return IResult::Done(&input[len..], s);
             }
-            32 ... 128 => {
+            32 ... 126 => {
                 // OK
             }
             _ => {
@@ -324,14 +332,14 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
         }
     }
 
-    return IResult::Done(&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) });
+    IResult::Done(&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) })
 }
 
-named!(wad_entry(&[u8]) -> BareWADDirectoryEntry, dbg_dmp!(do_parse!(
+named!(wad_entry<BareWADDirectoryEntry>, dbg_dmp!(do_parse!(
     filepos: le_u32 >>
     size: le_u32 >>
     name: apply!(fixed_length_ascii, 8) >>
-    (BareWADDirectoryEntry{ filepos: filepos, size: size, name: name })
+    (BareWADDirectoryEntry{ filepos, size, name })
 )));
 
 fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8], Vec<BareWADDirectoryEntry<'a>>> {
@@ -350,15 +358,9 @@ fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8],
         ret.push(entry);
         parse_from = leftovers;
     }
-    return IResult::Done(parse_from, ret);
+    IResult::Done(parse_from, ret)
 }
 
-
-impl<'a> BareWAD<'a> {
-    pub fn iter_maps(&'a self) -> WADMapIterator<'a> {
-        return WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate().peekable() };
-    }
-}
 
 // TODO problems to scan a wad map for:
 // - missing a required lump
@@ -371,10 +373,10 @@ impl<'a> BareWAD<'a> {
 // FIXME actually this fairly simple format is a good place to start thinking about how to return errors in general; like, do i want custom errors for tags?  etc
 pub fn parse_wad(buf: &[u8]) -> Result<BareWAD> {
     // FIXME ambiguous whether the error was from parsing the header or the entries
-    let header = try!(nom_to_result("wad header", buf, wad_header(buf)));
+    let header = nom_to_result("wad header", buf, wad_header(buf))?;
     // TODO buf is not actually the right place here
-    let entries = try!(nom_to_result("wad index", buf, wad_directory(buf, &header)));
-    return Ok(BareWAD{ buffer: buf, header: header, directory: entries });
+    let entries = nom_to_result("wad index", buf, wad_directory(buf, &header))?;
+    Ok(BareWAD{ buffer: buf, header, directory: entries })
 }
 
 
@@ -382,7 +384,7 @@ pub fn parse_wad(buf: &[u8]) -> Result<BareWAD> {
 // Map stuff
 
 // Standard lumps and whether they're required
-const MAP_LUMP_ORDER: [(&'static str, bool); 11] = [
+const MAP_LUMP_ORDER: [(&str, bool); 11] = [
     ("THINGS",	 true),
     ("LINEDEFS", true),
     ("SIDEDEFS", true),
@@ -406,25 +408,22 @@ impl<'a> Iterator for WADMapIterator<'a> {
     type Item = WADMapEntryBlock;
 
     fn next(&mut self) -> Option<WADMapEntryBlock> {
-        let (marker_index, map_name);
-        loop {
+        let (marker_index, map_name) = loop {
             if let Some((i, entry)) = self.entry_iter.next() {
                 if let IResult::Done(_, found_map_name) = vanilla_map_name(entry.name.as_bytes()) {
-                    marker_index = i;
-                    map_name = found_map_name;
-                    break;
+                    break (i, found_map_name);
                 }
             }
             else {
                 // Hit the end of the entries
                 return None;
             }
-        }
+        };
 
         let mut range = WADMapEntryBlock{
             format: MapFormat::Doom,
             name: map_name,
-            marker_index: marker_index,
+            marker_index,
             last_index: marker_index,
 
             things_index: None,
@@ -441,16 +440,11 @@ impl<'a> Iterator for WADMapIterator<'a> {
             textmap_index: None,
         };
 
-        let mut i;
-        let mut entry;
         // Use peeking here, so that if we stumble onto the next map header, we don't consume it
-        match self.entry_iter.peek() {
-            Some(&(next_i, next_entry)) => {
-                i = next_i;
-                entry = next_entry;
-            }
+        let (mut i, mut entry) = match self.entry_iter.peek() {
+            Some(&next) => next,
             None => { return None; }
-        }
+        };
 
         if entry.name == "TEXTMAP" {
             // This is a UDMF map, which has a completely different scheme: it
@@ -508,7 +502,7 @@ impl<'a> Iterator for WADMapIterator<'a> {
         }
 
         range.last_index = i;
-        return Some(range);
+        Some(range)
     }
 }
 
@@ -548,14 +542,7 @@ pub struct WADMapEntryBlock {
 //   - BLOCKMAP (deferrable)
 // - put all this in its own module/hierarchy
 
-named!(hexen_args(&[u8]) -> [u8; 5], do_parse!(
-    arg0: le_u8 >>
-    arg1: le_u8 >>
-    arg2: le_u8 >>
-    arg3: le_u8 >>
-    arg4: le_u8 >>
-    ([arg0, arg1, arg2, arg3, arg4])
-));
+named!(hexen_args<[u8; 5]>, count_fixed!(u8, le_u8, 5));
 
 #[derive(Debug)]
 pub struct BareDoomThing {
@@ -570,23 +557,23 @@ pub struct BareDoomThing {
 
 impl BareDoomThing {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
-        try!(writer.write_i16::<LittleEndian>(self.x));
-        try!(writer.write_i16::<LittleEndian>(self.y));
-        try!(writer.write_i16::<LittleEndian>(self.angle));
-        try!(writer.write_i16::<LittleEndian>(self.doomednum));
-        try!(writer.write_u16::<LittleEndian>(self.flags));
+        writer.write_i16::<LittleEndian>(self.x)?;
+        writer.write_i16::<LittleEndian>(self.y)?;
+        writer.write_i16::<LittleEndian>(self.angle)?;
+        writer.write_i16::<LittleEndian>(self.doomednum)?;
+        writer.write_u16::<LittleEndian>(self.flags)?;
         Ok(())
     }
 }
 
 // TODO totally different in hexen
-named!(doom_things_lump(&[u8]) -> Vec<BareDoomThing>, terminated!(many0!(do_parse!(
+named!(doom_things_lump<Vec<BareDoomThing>>, terminated!(many0!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
     angle: le_i16 >>
     doomednum: le_i16 >>
     flags: le_u16 >>
-    (BareDoomThing{ x: x, y: y, angle: angle, doomednum: doomednum, flags: flags })
+    (BareDoomThing{ x, y, angle, doomednum, flags })
 )), eof!()));
 
 #[derive(Debug)]
@@ -605,7 +592,7 @@ pub struct BareHexenThing {
 }
 
 // TODO totally different in hexen
-named!(hexen_things_lump(&[u8]) -> Vec<BareHexenThing>, terminated!(many0!(do_parse!(
+named!(hexen_things_lump<Vec<BareHexenThing>>, terminated!(many0!(do_parse!(
     tid: le_i16 >>
     x: le_i16 >>
     y: le_i16 >>
@@ -616,15 +603,15 @@ named!(hexen_things_lump(&[u8]) -> Vec<BareHexenThing>, terminated!(many0!(do_pa
     special: le_u8 >>
     args: hexen_args >>
     (BareHexenThing{
-        tid: tid,
-        x: x,
-        y: y,
-        z: z,
-        angle: angle,
-        doomednum: doomednum,
-        flags: flags,
-        special: special,
-        args: args,
+        tid,
+        x,
+        y,
+        z,
+        angle,
+        doomednum,
+        flags,
+        special,
+        args,
     })
 )), eof!()));
 
@@ -667,18 +654,18 @@ pub struct BareDoomLine {
 
 impl BareDoomLine {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
-        try!(writer.write_i16::<LittleEndian>(self.v0));
-        try!(writer.write_i16::<LittleEndian>(self.v1));
-        try!(writer.write_i16::<LittleEndian>(self.flags));
-        try!(writer.write_i16::<LittleEndian>(self.special));
-        try!(writer.write_i16::<LittleEndian>(self.sector_tag));
-        try!(writer.write_i16::<LittleEndian>(self.front_sidedef));
-        try!(writer.write_i16::<LittleEndian>(self.back_sidedef));
+        writer.write_i16::<LittleEndian>(self.v0)?;
+        writer.write_i16::<LittleEndian>(self.v1)?;
+        writer.write_i16::<LittleEndian>(self.flags)?;
+        writer.write_i16::<LittleEndian>(self.special)?;
+        writer.write_i16::<LittleEndian>(self.sector_tag)?;
+        writer.write_i16::<LittleEndian>(self.front_sidedef)?;
+        writer.write_i16::<LittleEndian>(self.back_sidedef)?;
         Ok(())
     }
 }
 
-named!(doom_linedefs_lump(&[u8]) -> Vec<BareDoomLine>, terminated!(many0!(do_parse!(
+named!(doom_linedefs_lump<Vec<BareDoomLine>>, terminated!(many0!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -686,7 +673,7 @@ named!(doom_linedefs_lump(&[u8]) -> Vec<BareDoomLine>, terminated!(many0!(do_par
     sector_tag: le_i16 >>
     front_sidedef: le_i16 >>
     back_sidedef: le_i16 >>
-    (BareDoomLine{ v0: v0, v1: v1, flags: flags, special: special, sector_tag: sector_tag, front_sidedef: front_sidedef, back_sidedef: back_sidedef })
+    (BareDoomLine{ v0, v1, flags, special, sector_tag, front_sidedef, back_sidedef })
 )), eof!()));
 
 // TODO source ports extended ids to unsigned here too
@@ -702,7 +689,7 @@ pub struct BareHexenLine {
     pub back_sidedef: i16,
 }
 
-named!(hexen_linedefs_lump(&[u8]) -> Vec<BareHexenLine>, terminated!(many0!(do_parse!(
+named!(hexen_linedefs_lump<Vec<BareHexenLine>>, terminated!(many0!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -711,13 +698,13 @@ named!(hexen_linedefs_lump(&[u8]) -> Vec<BareHexenLine>, terminated!(many0!(do_p
     front_sidedef: le_i16 >>
     back_sidedef: le_i16 >>
     (BareHexenLine{
-        v0: v0,
-        v1: v1,
-        flags: flags,
-        special: special,
-        args: args,
-        front_sidedef: front_sidedef,
-        back_sidedef: back_sidedef,
+        v0,
+        v1,
+        flags,
+        special,
+        args,
+        front_sidedef,
+        back_sidedef,
     })
 )), eof!()));
 
@@ -768,21 +755,21 @@ pub struct BareSide<'a> {
 
 impl<'a> BareSide<'a> {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
-        try!(writer.write_i16::<LittleEndian>(self.x_offset));
-        try!(writer.write_i16::<LittleEndian>(self.y_offset));
-        try!(writer.write(self.upper_texture.as_bytes()));
+        writer.write_i16::<LittleEndian>(self.x_offset)?;
+        writer.write_i16::<LittleEndian>(self.y_offset)?;
+        writer.write(self.upper_texture.as_bytes())?;
         for _ in self.upper_texture.len() .. 8 {
-            try!(writer.write(&[0]));
+            writer.write(&[0])?;
         }
-        try!(writer.write(self.lower_texture.as_bytes()));
+        writer.write(self.lower_texture.as_bytes())?;
         for _ in self.lower_texture.len() .. 8 {
-            try!(writer.write(&[0]));
+            writer.write(&[0])?;
         }
-        try!(writer.write(self.middle_texture.as_bytes()));
+        writer.write(self.middle_texture.as_bytes())?;
         for _ in self.middle_texture.len() .. 8 {
-            try!(writer.write(&[0]));
+            writer.write(&[0])?;
         }
-        try!(writer.write_i16::<LittleEndian>(self.sector));
+        writer.write_i16::<LittleEndian>(self.sector)?;
         Ok(())
     }
 }
@@ -809,7 +796,7 @@ macro_rules! typed_eof (
     );
 );
 
-named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, map!(many_till!(do_parse!(
+named!(sidedefs_lump<Vec<BareSide>>, map!(many_till!(do_parse!(
     x_offset: le_i16 >>
     y_offset: le_i16 >>
     upper_texture: apply!(fixed_length_ascii, 8) >>
@@ -817,12 +804,12 @@ named!(sidedefs_lump(&[u8]) -> Vec<BareSide>, map!(many_till!(do_parse!(
     middle_texture: apply!(fixed_length_ascii, 8) >>
     sector: le_i16 >>
     (BareSide{
-        x_offset: x_offset,
-        y_offset: y_offset,
-        upper_texture: upper_texture,
-        lower_texture: lower_texture,
-        middle_texture: middle_texture,
-        sector: sector
+        x_offset,
+        y_offset,
+        upper_texture,
+        lower_texture,
+        middle_texture,
+        sector
     })
 ), typed_eof!()), |(r, _)| r));
 
@@ -835,16 +822,16 @@ pub struct BareVertex {
 
 impl BareVertex {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
-        try!(writer.write_i16::<LittleEndian>(self.x));
-        try!(writer.write_i16::<LittleEndian>(self.y));
+        writer.write_i16::<LittleEndian>(self.x)?;
+        writer.write_i16::<LittleEndian>(self.y)?;
         Ok(())
     }
 }
 
-named!(vertexes_lump<&[u8], Vec<BareVertex>>, terminated!(many0!(do_parse!(
+named!(vertexes_lump<Vec<BareVertex>>, terminated!(many0!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
-    (BareVertex{ x: x, y: y })
+    (BareVertex{ x, y })
 )), eof!()));
 
 
@@ -862,24 +849,24 @@ pub struct BareSector<'a> {
 
 impl<'a> BareSector<'a> {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
-        try!(writer.write_i16::<LittleEndian>(self.floor_height));
-        try!(writer.write_i16::<LittleEndian>(self.ceiling_height));
-        try!(writer.write(self.floor_texture.as_bytes()));
+        writer.write_i16::<LittleEndian>(self.floor_height)?;
+        writer.write_i16::<LittleEndian>(self.ceiling_height)?;
+        writer.write(self.floor_texture.as_bytes())?;
         for _ in self.floor_texture.len() .. 8 {
-            try!(writer.write(&[0]));
+            writer.write(&[0])?;
         }
-        try!(writer.write(self.ceiling_texture.as_bytes()));
+        writer.write(self.ceiling_texture.as_bytes())?;
         for _ in self.ceiling_texture.len() .. 8 {
-            try!(writer.write(&[0]));
+            writer.write(&[0])?;
         }
-        try!(writer.write_i16::<LittleEndian>(self.light));
-        try!(writer.write_i16::<LittleEndian>(self.sector_type));
-        try!(writer.write_i16::<LittleEndian>(self.sector_tag));
+        writer.write_i16::<LittleEndian>(self.light)?;
+        writer.write_i16::<LittleEndian>(self.sector_type)?;
+        writer.write_i16::<LittleEndian>(self.sector_tag)?;
         Ok(())
     }
 }
 
-named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(
+named!(sectors_lump<Vec<BareSector>>, terminated!(many0!(do_parse!(
     floor_height: le_i16 >>
     ceiling_height: le_i16 >>
     floor_texture: apply!(fixed_length_ascii, 8) >>
@@ -888,13 +875,13 @@ named!(sectors_lump(&[u8]) -> Vec<BareSector>, terminated!(many0!(do_parse!(
     sector_type: le_i16 >>
     sector_tag: le_i16 >>
     (BareSector{
-        floor_height: floor_height,
-        ceiling_height: ceiling_height,
-        floor_texture: floor_texture,
-        ceiling_texture: ceiling_texture,
-        light: light,
-        sector_type: sector_type,
-        sector_tag: sector_tag,
+        floor_height,
+        ceiling_height,
+        floor_texture,
+        ceiling_texture,
+        light,
+        sector_type,
+        sector_tag,
     })
 )), eof!()));
 
@@ -930,51 +917,51 @@ pub enum BareMap<'a> {
 // TODO much more error handling wow lol
 pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Result<BareMap<'a>> {
     // TODO the map being parsed doesn't appear in the returned error...  sigh
-    let vertexes_index = try!( range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES")) );
+    let vertexes_index = range.vertexes_index.ok_or(ErrorKind::MissingMapLump("VERTEXES"))?;
     let buf = archive.entry_slice(vertexes_index);
-    let vertices = try!( nom_to_result("VERTEXES lump", buf, vertexes_lump(buf)) );
+    let vertices = nom_to_result("VERTEXES lump", buf, vertexes_lump(buf))?;
 
-    let sectors_index = try!( range.sectors_index.ok_or(ErrorKind::MissingMapLump("SECTORS")) );
+    let sectors_index = range.sectors_index.ok_or(ErrorKind::MissingMapLump("SECTORS"))?;
     let buf = archive.entry_slice(sectors_index);
-    let sectors = try!( nom_to_result("SECTORS lump", buf, sectors_lump(buf)) );
+    let sectors = nom_to_result("SECTORS lump", buf, sectors_lump(buf))?;
 
-    let sidedefs_index = try!( range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS")) );
+    let sidedefs_index = range.sidedefs_index.ok_or(ErrorKind::MissingMapLump("SIDEDEFS"))?;
     let buf = archive.entry_slice(sidedefs_index);
-    let sides = try!( nom_to_result("SIDEDEFS lump", buf, sidedefs_lump(buf)) );
+    let sides = nom_to_result("SIDEDEFS lump", buf, sidedefs_lump(buf))?;
 
     if range.format == MapFormat::Doom {
-        let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
+        let linedefs_index = range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS"))?;
         let buf = archive.entry_slice(linedefs_index);
-        let lines = try!( nom_to_result("LINEDEFS lump", buf, doom_linedefs_lump(buf)) );
+        let lines = nom_to_result("LINEDEFS lump", buf, doom_linedefs_lump(buf))?;
 
-        let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
+        let things_index = range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS"))?;
         let buf = archive.entry_slice(things_index);
-        let things = try!( nom_to_result("THINGS lump", buf, doom_things_lump(buf)) );
+        let things = nom_to_result("THINGS lump", buf, doom_things_lump(buf))?;
 
-        return Ok(BareMap::Doom(BareDoomMap{
-            vertices: vertices,
-            sectors: sectors,
-            sides: sides,
-            lines: lines,
-            things: things,
-        }));
+        Ok(BareMap::Doom(BareDoomMap{
+            vertices,
+            sectors,
+            sides,
+            lines,
+            things,
+        }))
     }
     else {
-        let linedefs_index = try!( range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS")) );
+        let linedefs_index = range.linedefs_index.ok_or(ErrorKind::MissingMapLump("LINEDEFS"))?;
         let buf = archive.entry_slice(linedefs_index);
-        let lines = try!( nom_to_result("LINEDEFS lump", buf, hexen_linedefs_lump(buf)) );
+        let lines = nom_to_result("LINEDEFS lump", buf, hexen_linedefs_lump(buf))?;
 
-        let things_index = try!( range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS")) );
+        let things_index = range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS"))?;
         let buf = archive.entry_slice(things_index);
-        let things = try!( nom_to_result("THINGS lump", buf, hexen_things_lump(buf)) );
+        let things = nom_to_result("THINGS lump", buf, hexen_things_lump(buf))?;
 
-        return Ok(BareMap::Hexen(BareHexenMap{
-            vertices: vertices,
-            sectors: sectors,
-            sides: sides,
-            lines: lines,
-            things: things,
-        }));
+        Ok(BareMap::Hexen(BareHexenMap{
+            vertices,
+            sectors,
+            sides,
+            lines,
+            things,
+        }))
     }
 }
 
@@ -988,7 +975,7 @@ use std::collections::HashMap;
 // TODO ok so this is mildly clever but won't work once we get to UDMF champ
 impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
     // TODO this is a horrible fucking mess.  but it's a /contained/ horrible fucking mess, so.
-    pub fn sector_to_polygons(&'a self, s: usize) -> Vec<Vec<&'a BareVertex>> {
+    pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<&BareVertex>> {
         struct Edge<'a, L: 'a> {
             line: &'a L,
             side: &'a BareSide<'a>,
@@ -1008,7 +995,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
         impl<'a> Eq for VertexRef<'a> {}
         impl<'a> std::hash::Hash for VertexRef<'a> {
             fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-                (self.0 as *const _).hash(state)
+                (self.0 as *const BareVertex).hash(state)
             }
         }
 
@@ -1031,17 +1018,17 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
                 if side.sector as usize == s {
                     let (v0, v1) = line.vertex_indices();
                     let edge = Edge{
-                        line: line,
-                        side: side,
-                        facing: facing,
+                        line,
+                        side,
+                        facing,
                         // TODO should these be swapped depending on the line facing?
                         v0: &self.vertices[v0 as usize],
                         v1: &self.vertices[v1 as usize],
                         done: false,
                     };
                     edges.push(edge);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[v0 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[v1 as usize])).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[v0 as usize])).or_insert(Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(&self.vertices[v1 as usize])).or_insert(Vec::new()).push(edges.len() - 1);
                 }
             }
         }
@@ -1063,7 +1050,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
                     break;
                 }
             }
-            if next_vertices.len() == 0 {
+            if next_vertices.is_empty() {
                 break;
             }
 
@@ -1107,17 +1094,17 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
             }
         }
 
-        return outlines;
+        outlines
     }
 
     // TODO of course, this doesn't take later movement of sectors into account, dammit
-    pub fn count_textures(&'a self) -> HashMap<&'a str, (usize, f32)> {
-        let mut counts: HashMap<&'a str, (usize, f32)> = HashMap::new();
+    pub fn count_textures(&self) -> HashMap<&str, (usize, f32)> {
+        let mut counts: HashMap<_, (usize, f32)> = HashMap::new();
 
         // This block exists only so `add` goes out of scope (and stops borrowing counts) before we
         // return; I don't know why the compiler cares when `add` clearly doesn't escape
         {
-            let mut add = |tex: &'a str, area: f32| {
+            let mut add = |tex, area| {
                 // TODO iirc doom64 or something uses a different empty texture name, "?"
                 if tex != "-" {
                     let entry = counts.entry(tex).or_insert((0, 0.0));
@@ -1205,7 +1192,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
             }
         }
 
-        return counts;
+        counts
     }
 }
 
@@ -1216,13 +1203,13 @@ pub struct TEXTURExEntry<'a> {
     pub height: i16,
 }
 
-named!(texturex_lump_header(&[u8]) -> Vec<i32>, do_parse!(
+named!(texturex_lump_header<Vec<i32>>, do_parse!(
     numtextures: le_i32 >>
     offsets: many_m_n!(numtextures as usize, numtextures as usize, le_i32) >>
     (offsets)
 ));
 
-named!(texturex_lump_entry(&[u8]) -> TEXTURExEntry, do_parse!(
+named!(texturex_lump_entry<TEXTURExEntry>, do_parse!(
     name: apply!(fixed_length_ascii, 8) >>
     le_i32 >>  // "masked", unused
     // TODO these should be positive
@@ -1232,29 +1219,21 @@ named!(texturex_lump_entry(&[u8]) -> TEXTURExEntry, do_parse!(
     patchcount: le_i16 >>
     // TODO patches
     (TEXTURExEntry{
-        name: name,
-        width: width,
-        height: height,
+        name,
+        width,
+        height,
     })
 ));
 
-pub fn parse_texturex_names<'a>(buf: &'a [u8]) -> Result<Vec<TEXTURExEntry<'a>>> {
-    let offsets = try!(nom_to_result("TEXTUREx header", buf, texturex_lump_header(buf)));
+pub fn parse_texturex_names(buf: &[u8]) -> Result<Vec<TEXTURExEntry>> {
+    let offsets = nom_to_result("TEXTUREx header", buf, texturex_lump_header(buf))?;
     let mut ret = Vec::with_capacity(offsets.len());
     for (i, &offset) in offsets.iter().enumerate() {
         if offset < 0 {
             bail!(ErrorKind::NegativeOffset("TEXTUREx", i, offset as isize));
         }
         // TODO check for too large offset too, instead of Incomplete
-        ret.push(try!(nom_to_result("TEXTUREx", buf, texturex_lump_entry(&buf[(offset as usize)..]))));
+        ret.push(nom_to_result("TEXTUREx", buf, texturex_lump_entry(&buf[(offset as usize)..]))?);
     }
-    return Ok(ret);
-}
-
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn it_works() {
-    }
+    Ok(ret)
 }

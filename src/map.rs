@@ -55,6 +55,7 @@ impl Map {
             sector.special = bare_sector.sector_type as u32;
             sector.floor_height = bare_sector.floor_height as i32;
             sector.ceiling_height = bare_sector.ceiling_height as i32;
+            sector.light = bare_sector.light as u8;
         }
         for bare_vertex in bare_map.vertices.iter() {
             map.add_vertex(bare_vertex.x as f64, bare_vertex.y as f64);
@@ -70,6 +71,8 @@ impl Map {
             let handle = map.add_line((bare_line.v0 as usize).into(), (bare_line.v1 as usize).into());
             let line = map.line_mut(handle);
             line.flags = bare_line.flags as u32;
+            line.special = bare_line.special as usize;
+            line.sector_tag = bare_line.sector_tag as u32;
             // FIXME and here's where we start to go awry -- this should use a method.  so should
             // new side w/ sector
             if bare_line.front_sidedef != -1 {
@@ -97,7 +100,7 @@ impl Map {
     }
 
     fn add_sector(&mut self) -> Handle<Sector> {
-        self.sectors.push(Sector{ special: 0, tag: 0, floor_height: 0, ceiling_height: 0 });
+        self.sectors.push(Sector{ special: 0, tag: 0, floor_height: 0, ceiling_height: 0, light: 0 });
         (self.sectors.len() - 1).into()
     }
     fn add_side(&mut self, sector: Handle<Sector>) -> Handle<Side> {
@@ -121,6 +124,7 @@ impl Map {
             end,
             flags: 0,
             special: 0,
+            sector_tag: 0,
             front: None,
             back: None,
         });
@@ -355,7 +359,9 @@ pub struct Line {
     end: Handle<Vertex>,
     flags: u32,
     special: usize,
-    //sector_tag -- oops, different in zdoom...
+    // TODO doom maps only!
+    // TODO should this be...  something more strongly typed to separate 0 meaning none?
+    sector_tag: u32,
     front: Option<Handle<Side>>,
     back: Option<Handle<Side>>,
 }
@@ -371,6 +377,10 @@ impl Line {
 
     pub fn has_special(&self) -> bool {
         self.special != 0
+    }
+
+    pub fn sector_tag(&self) -> u32 {
+        return self.sector_tag;
     }
 
     pub fn blocks_player(&self) -> bool {
@@ -419,6 +429,10 @@ impl<'a> BoundLine<'a> {
         self.0.has_special()
     }
 
+    pub fn sector_tag(&self) -> u32 {
+        self.0.sector_tag()
+    }
+
     pub fn blocks_player(&self) -> bool {
         self.0.blocks_player()
     }
@@ -438,6 +452,7 @@ pub struct Sector {
 
     floor_height: i32,
     ceiling_height: i32,
+    light: u8,
 }
 
 impl Sector {
@@ -455,6 +470,10 @@ impl Sector {
 
     pub fn ceiling_height(&self) -> i32 {
         self.ceiling_height
+    }
+
+    pub fn light(&self) -> u8 {
+        return self.light;
     }
 }
 

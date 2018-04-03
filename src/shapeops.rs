@@ -31,7 +31,7 @@ use euclid::TypedSize2D;
 use typed_arena::Arena;
 
 
-const SPEW: bool = false;
+const SPEW: bool = true;
 
 // const TEMP_SECTOR_COUNT: usize = 3;
 
@@ -794,9 +794,17 @@ impl ops::IndexMut<usize> for Polygon {
 
 type PolygonIndex = usize;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PolygonMode {
+    Normal,
+    RemoveEdges,
+    RemoveInterior,
+}
+
 #[derive(Clone, Debug)]
 struct SegmentPacket {
     polygon_index: PolygonIndex,
+    mode: PolygonMode,
     edge_type: EdgeType,
     up_faces_outwards: bool,
     is_outside_other_poly: bool,
@@ -821,9 +829,10 @@ struct SegmentPacket {
 }
 
 impl SegmentPacket {
-    fn new(polygon_index: usize, npolygons: usize) -> Self {
+    fn new(polygon_index: usize, mode: PolygonMode, npolygons: usize) -> Self {
         SegmentPacket{
             polygon_index,
+            mode,
             edge_type: EdgeType::Normal,
             up_faces_outwards: false,
             is_outside_other_poly: false,
@@ -887,7 +896,7 @@ impl BoolSweepSegment {
 }
 
 /// @brief compute several fields of left event le
-fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
+fn compute_fields(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
     // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
     {
         let mut packet = segment.data.borrow_mut();
@@ -964,13 +973,14 @@ fn compute_fields(operation: BooleanOpType, segment: &BoolSweepSegment, maybe_be
         println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}", segment.index, maybe_below.map(|x| x.index), left_polys, right_polys);
     }
 
-    let is_in_result = is_in_result(operation, segment);
+    let is_in_result = is_in_result(segment);
     segment.data.borrow_mut().is_in_result = is_in_result;
 }
 
 /* Check whether a segment should be included in the final polygon */
-fn is_in_result(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
+fn is_in_result(segment: &BoolSweepSegment) -> bool {
     let packet = segment.data.borrow();
+    /*
     match packet.edge_type {
         EdgeType::Normal => match operation {
             BooleanOpType::Intersection => ! packet.is_outside_other_poly,
@@ -983,6 +993,20 @@ fn is_in_result(operation: BooleanOpType, segment: &BoolSweepSegment) -> bool {
         EdgeType::DifferentTransition => operation == BooleanOpType::Difference,
         EdgeType::NonContributing => false,
     }
+    */
+    if packet.edge_type == EdgeType::NonContributing {
+        return false;
+    }
+    if packet.mode == PolygonMode::RemoveEdges {
+        return false;
+    }
+    /*
+    if packet.mode == PolygonMode::RemoveInterior {
+        // TODO how...  do i...  also remove any line on the inside?
+        return false;
+    }
+    */
+    return true;
 }
 
 /* Check for and handle an intersection between two adjacent segments */
@@ -1156,6 +1180,13 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
         start_index -= 1;
     }
 
+    // FIXME dammit, the above doesn't work if we omit one of the points from included_endpoints
+    // entirely!  its _index will just be the default of zero.  ass.  fuck.
+    start_index = 0;
+    while included_endpoints[start_index].point() != next_point {
+        start_index += 1;
+    }
+
     // Find the closest angle.  That means the biggest dot product, or the smallest, maybe.
     // TODO should i just use signed triangle area here?
     let mut closest_dot = f64::NAN;
@@ -1220,7 +1251,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     }
 }
 
-pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
+pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) -> Polygon {
     // ---------------------------------------------------------------------------------------------
     // Detect trivial cases that can be answered without doing any work
 
@@ -1274,14 +1305,14 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
     let mut svg_orig_group = Group::new();
     // TODO could reserve space here and elsewhere
     let mut segment_order = Vec::new();
-    for (i, polygon) in polygons.iter().enumerate() {
+    for (i, &(ref polygon, mode)) in polygons.iter().enumerate() {
         let mut data = Data::new();
         for contour in &polygon.contours {
             for seg in contour.iter_segments() {
             /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
                     return;          // This can be done as preprocessing to avoid "polygons" with less than 3 edges */
                 let segment: &_ = arena.alloc(SweepSegment::new(
-                    seg.source, seg.target, segment_id, i, RefCell::new(SegmentPacket::new(i, polygons.len()))));
+                    seg.source, seg.target, segment_id, i, RefCell::new(SegmentPacket::new(i, mode, polygons.len()))));
                 segment_id += 1;
                 segment_order.push(segment);
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
@@ -1324,7 +1355,7 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
                     seg.left_point, pt, segment_id, polygon_index, seg.data.clone()));
                 segment_id += 1;
                 let right: &_ = arena.alloc(SweepSegment::new(
-                    pt, seg.right_point, segment_id, polygon_index, RefCell::new(SegmentPacket::new(polygon_index, polygons.len()))));
+                    pt, seg.right_point, segment_id, polygon_index, RefCell::new(SegmentPacket::new(polygon_index, seg.data.borrow().mode, polygons.len()))));
                 {
                     // TODO ugly ass copy
                     let mut packet = right.data.borrow_mut();
@@ -1446,7 +1477,7 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         let mut maybe_below = active_segments.range(..segment).last().map(|v| *v);
         let mut maybe_above = active_segments.range(segment..).next().map(|v| *v);
         active_segments.insert(segment);
-        compute_fields(operation, segment, maybe_below);
+        compute_fields(segment, maybe_below);
         // Check for intersections with the segment above
         let cross = handle_intersections(Some(segment), maybe_above);
         if let Some(pt) = cross.1 {
@@ -1460,8 +1491,8 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
             // with the same args in particular?
             // NOTE: answer is: because returning 2 means we changed the segments' edge types, so
             // is_in_result might change!
-            compute_fields(operation, segment, maybe_below);
-            compute_fields(operation, maybe_above.unwrap(), Some(segment));
+            compute_fields(segment, maybe_below);
+            compute_fields(maybe_above.unwrap(), Some(segment));
         }
         // Check for intersections with the segment below
         let cross = handle_intersections(maybe_below, Some(segment));
@@ -1474,8 +1505,8 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         if cross.0 == 2 {
             // XXX might want to enforce that these aren't the same pair twice, since that makes
             // things...  confusing.  artifact of how we sort and split; see comment in PartialOrd
-            compute_fields(operation, maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));
-            compute_fields(operation, segment, maybe_below);
+            compute_fields(maybe_below.unwrap(), active_segments.range(..maybe_below.unwrap()).last().map(|v| *v));
+            compute_fields(segment, maybe_below);
         }
     }
 
@@ -1486,8 +1517,32 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
     {
     let mut svg_swept_group = Group::new();
     for segment in &swept_segments {
-        if segment.data.borrow().edge_type == EdgeType::NonContributing {
-            //continue;
+        if ! segment.data.borrow().is_in_result {
+            continue;
+        }
+        let mut skip_left = false;
+        for (polygon_index, flag) in segment.data.borrow().left_faces_polygons.iter().enumerate() {
+            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
+                skip_left = true;
+                break;
+            }
+        }
+        if segment.data.borrow().left_faces_polygons.none() {
+            skip_left = true;
+        }
+        let mut skip_right = false;
+        for (polygon_index, flag) in segment.data.borrow().right_faces_polygons.iter().enumerate() {
+            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
+                skip_right = true;
+                break;
+            }
+        }
+        if segment.data.borrow().right_faces_polygons.none() {
+            skip_right = true;
+        }
+
+        if skip_left && skip_right {
+            continue;
         }
         svg_swept_group.append(
             Line::new()
@@ -1510,7 +1565,7 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         }
         svg_swept_group.append(
             Text::new()
-            .add(svg::node::Text::new(format!("{} {:?}{:?}", segment.index, left_polys, right_polys)))
+            .add(svg::node::Text::new(format!("{} {:?}{:?} {} {}", segment.index, left_polys, right_polys, if skip_left { "L" } else { "" }, if skip_right { "R" } else { "" })))
             .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
             .set("y", -(segment.left_point.y + segment.right_point.y) / 2.0)
             .set("fill", if segment.data.borrow().edge_type == EdgeType::NonContributing { "lightgreen" } else {"darkgreen" })
@@ -1542,22 +1597,48 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         .expect("could not save idchoppers-shapeops-debug.svg");
     }
 
-    // connect the solution edges to build the result polygon
-    // copy the events in the result polygon to included_points array
-    // XXX since otherEvent is still kosher, i don't think this is a copy!
+    // Finally, trace the output polygons from the final set of segments we got
     let count = swept_segments.len();
     let mut included_segments: Vec<&BoolSweepSegment> = Vec::with_capacity(count);
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
-        if segment.data.borrow().edge_type == EdgeType::NonContributing {
-            continue;
-        }
         // if segment.data.borrow().polygon_index < TEMP_SECTOR_COUNT {
         //     continue;
         // }
-        if segment.data.borrow().is_in_result || true {
-            included_segments.push(segment);
+        if ! segment.data.borrow().is_in_result {
+            continue;
+        }
+        // FIXME this is nnnnot gonna fly
+        let mut skip_left = false;
+        for (polygon_index, flag) in segment.data.borrow().left_faces_polygons.iter().enumerate() {
+            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
+                skip_left = true;
+                break;
+            }
+        }
+        if segment.data.borrow().left_faces_polygons.none() {
+            skip_left = true;
+        }
+        let mut skip_right = false;
+        for (polygon_index, flag) in segment.data.borrow().right_faces_polygons.iter().enumerate() {
+            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
+                skip_right = true;
+                break;
+            }
+        }
+        if segment.data.borrow().right_faces_polygons.none() {
+            skip_right = true;
+        }
+
+        if skip_left && skip_right {
+            continue;
+        }
+
+        included_segments.push(segment);
+        if ! skip_left {
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Left));
+        }
+        if ! skip_right {
             included_endpoints.push(SweepEndpoint(segment, SegmentEnd::Right));
         }
     }

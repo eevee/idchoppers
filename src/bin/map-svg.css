@@ -1,17 +1,28 @@
+.line, .sector {
+    vector-effect: non-scaling-stroke;
+}
+
 .line.zero-sided {
     stroke: red;
-    stroke-width: 2;
+    stroke-width: 1;
 }
 .line.one-sided {
-    stroke: black;
-    stroke-width: 2;
+    stroke: #400;
+    stroke-width: 1;
 }
 .line.two-sided {
     stroke: #999;
-    stroke-width: 1;
+    stroke-width: 0.5;
+}
+.line.step {
+    stroke: #ccc;
+    stroke-dasharray: 1, 1;
+}
+.line.blocking {
+    stroke: #400;
 }
 .line.has-special {
-    stroke: #04f;
+    stroke: #f94;
 }
 .line-dilation {
     fill: rgba(0%, 0%, 0%, 0.25);
@@ -27,9 +38,12 @@
 .sector[data-sector-tag] {
     fill: rgba(100%, 50%, 0%, 0.25);
 }
+.sector.implicit-tag {
+    fill: rgba(100%, 50%, 0%, 0.125);
+}
 .sector:hover {
-    stroke-width: 4;
-    stroke: rgba(100%, 100%, 0%, 0.5);
+    stroke-width: 1.5;
+    stroke: #fc6;
     fill: rgba(100%, 100%, 0%, 0.25);
 }
 

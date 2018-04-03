@@ -370,6 +370,16 @@ fn map_as_svg(map: &Map) -> Document {
         if line.has_special() {
             classes.push("has-special");
         }
+        if line.blocks_player() {
+            classes.push("blocking");
+        }
+        if line.is_two_sided() {
+            let front = map.sector(line.front().unwrap().sector);
+            let back = map.sector(line.back().unwrap().sector);
+            if (front.floor_height() - back.floor_height()).abs() <= 24 && front.ceiling_height().min(back.ceiling_height()) - front.floor_height().max(back.floor_height()) >= 56 {
+                classes.push("step");
+            }
+        }
 
         // FIXME should annotate with line id
         group.append(
@@ -424,10 +434,23 @@ fn map_as_svg(map: &Map) -> Document {
         if sector.tag() != 0 {
             path.assign("data-sector-tag", sector.tag());
         }
+        path.assign("data-sector-light", sector.light());
+        path.assign("data-sector-light-color", format!("rgb({}, {}, {})", sector.light(), sector.light(), sector.light()));
         classes.clear();
         classes.push("sector");
         if sector.special() == 9 {
             classes.push("secret");
+        }
+        for line in map.iter_lines() {
+            if /* Some(sector) == line.front().map(|side| map.sector(side.sector))
+                || */ line.back().map(|side| side.sector) == Some(s.into())
+            {
+                // TODO obviously, this, is bad
+                if line.has_special() && line.sector_tag() == 0 {
+                    classes.push("implicit-tag");
+                    break;
+                }
+            }
         }
         path.assign("class", classes.join(" "));
         group.append(path);
@@ -601,7 +624,11 @@ fn do_shapeops() -> Result<()> {
         MapPoint::new(0., 32.),
     ];
     poly3.contours.push(contour);
-    let result = shapeops::compute(&vec![poly1, poly2, poly3], shapeops::BooleanOpType::Union);
+    let result = shapeops::compute(&vec![
+        (poly1, shapeops::PolygonMode::Normal),
+        (poly2, shapeops::PolygonMode::Normal),
+        (poly3, shapeops::PolygonMode::Normal)
+    ], shapeops::BooleanOpType::Union);
 
     let bbox = result.bbox();
     let mut doc = Document::new()
@@ -697,7 +724,7 @@ fn route_map_as_svg(map: &Map) -> Document {
             contour.points = points.iter().map(|p| MapPoint::new(p.x as f64, p.y as f64)).collect();
             polygon.contours.push(contour);
         }
-        polygons.push(polygon);
+        polygons.push((polygon, shapeops::PolygonMode::RemoveEdges));
         polygon_refs.push(PolygonRef::Sector(s.into()));
     }
 
@@ -710,13 +737,17 @@ fn route_map_as_svg(map: &Map) -> Document {
         let (_frontid, _backid) = line.side_indices();
         void_polygons.push(! line.is_two_sided());
 
+        let mode;
         if line.is_one_sided() {
+            mode = shapeops::PolygonMode::RemoveInterior;
             classes.push("one-sided");
         }
         else if line.is_two_sided() {
+            mode = shapeops::PolygonMode::Normal;
             classes.push("two-sided");
         }
         else {
+            mode = shapeops::PolygonMode::RemoveInterior;
             classes.push("zero-sided");
         }
 
@@ -763,7 +794,7 @@ fn route_map_as_svg(map: &Map) -> Document {
             ];
         }
         polygon.contours.push(contour);
-        polygons.push(polygon);
+        polygons.push((polygon, mode));
         polygon_refs.push(PolygonRef::Line(line));
     }
 
@@ -872,9 +903,9 @@ fn route_map_as_svg(map: &Map) -> Document {
         if ! contour.external() {
             continue;
         }
-        if void_contours.contains(&i) {
-            continue;
-        }
+        // if void_contours.contains(&i) {
+        //     continue;
+        // }
 
         let mut data = Data::new();
         let point = contour.points.last().unwrap();

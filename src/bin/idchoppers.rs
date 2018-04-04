@@ -667,13 +667,11 @@ fn do_shapeops() -> Result<()> {
 
 fn do_route(_args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
-        /*
         if let idchoppers::MapName::MAPxx(n) = map_range.name {
             if n < 2 {
                 continue;
             }
         }
-        */
         let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
@@ -728,14 +726,10 @@ fn route_map_as_svg(map: &Map) -> Document {
         polygon_refs.push(PolygonRef::Sector(s.into()));
     }
 
-    let mut void_polygons = BitVec::from_elem(polygons.len(), false);
     for line in map.iter_lines() {
         let mut polygon = shapeops::Polygon::new();
         let mut contour = shapeops::Contour::new();
         let mut classes = vec!["line"];
-
-        let (_frontid, _backid) = line.side_indices();
-        void_polygons.push(! line.is_two_sided());
 
         let mode;
         if line.is_one_sided() {
@@ -801,19 +795,9 @@ fn route_map_as_svg(map: &Map) -> Document {
     let start = map.find_player_start().unwrap_or(MapPoint::new(0., 0.));
 
     let result = shapeops::compute(&polygons, shapeops::BooleanOpType::Union);
-    let mut void_contours = BTreeSet::new();
     let mut seen_contours = BTreeSet::new();
     let mut next_contours = Vec::new();
     for (i, contour) in result.contours.iter().enumerate() {
-        // Skip any polygons resulting from touching a one-sided wall; the player can never walk
-        // there
-        let mut from_polygons = contour.from_polygons.clone();
-        from_polygons.intersect(&void_polygons);
-        if from_polygons.any() {
-            void_contours.insert(i);
-            continue;
-        }
-
         if contour.bbox().contains(&start) {
             next_contours.push(i);
             seen_contours.insert(i);
@@ -900,14 +884,11 @@ fn route_map_as_svg(map: &Map) -> Document {
     }
 
     for (i, contour) in result.contours.iter().enumerate() {
-        println!("contour #{}: external {:?}, counterclockwise {:?}, void? {}, holes {:?}", i, contour.external(), contour.counterclockwise(), void_contours.contains(&i), contour.holes);
+        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
 
         if ! contour.external() {
             continue;
         }
-        // if void_contours.contains(&i) {
-        //     continue;
-        // }
 
         let mut data = Data::new();
         let point = contour.points.last().unwrap();

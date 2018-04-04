@@ -850,48 +850,50 @@ fn route_map_as_svg(map: &Map) -> Document {
             let floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).max().unwrap_or(0);
             
             for (n, touches) in result[i].neighbors.iter().enumerate() {
-                if touches && ! seen_contours.contains(&n) {
-                    let mut in_sectors = HashSet::new();
-                    let mut ok = true;
-                    for (p, from) in result[i].from_polygons.iter().enumerate() {
-                        if ! from {
-                            continue;
-                        }
-                        match polygon_refs[p] {
-                            PolygonRef::Sector(sector) => {
-                                in_sectors.insert(sector);
-                            }
-                            PolygonRef::Line(line) => {
-                                if line.blocks_player() {
-                                    ok = false;
-                                    break;
-                                }
-                                if let Some(front) = line.front() {
-                                    in_sectors.insert(front.sector);
-                                }
-                                if let Some(back) = line.back() {
-                                    in_sectors.insert(back.sector);
-                                }
-                            }
-                        }
-                    }
-                    if ! ok {
-                        continue;
-                    }
-                    for &sectorh in &in_sectors {
-                        let sector = map.sector(sectorh);
-                        if sector.floor_height() - floor > PLAYER_STEP_HEIGHT || sector.ceiling_height() - sector.floor_height() < PLAYER_HEIGHT {
-                            ok = false;
-                            break;
-                        }
-                    }
-                    if ! ok {
-                        continue;
-                    }
-                    
-                    seen_contours.insert(n);
-                    next_contours.push(n);
+                if ! touches || seen_contours.contains(&n) {
+                    continue;
                 }
+
+                let mut in_sectors = HashSet::new();
+                let mut ok = true;
+                for (p, from) in result[n].from_polygons.iter().enumerate() {
+                    if ! from {
+                        continue;
+                    }
+                    match polygon_refs[p] {
+                        PolygonRef::Sector(sector) => {
+                            in_sectors.insert(sector);
+                        }
+                        PolygonRef::Line(line) => {
+                            if line.blocks_player() {
+                                ok = false;
+                                break;
+                            }
+                            if let Some(front) = line.front() {
+                                in_sectors.insert(front.sector);
+                            }
+                            if let Some(back) = line.back() {
+                                in_sectors.insert(back.sector);
+                            }
+                        }
+                    }
+                }
+                if ! ok {
+                    continue;
+                }
+                for &sectorh in &in_sectors {
+                    let sector = map.sector(sectorh);
+                    if sector.floor_height() - floor > PLAYER_STEP_HEIGHT || sector.ceiling_height() - sector.floor_height() < PLAYER_HEIGHT {
+                        ok = false;
+                        break;
+                    }
+                }
+                if ! ok {
+                    continue;
+                }
+                
+                seen_contours.insert(n);
+                next_contours.push(n);
             }
         }
         d += 1;

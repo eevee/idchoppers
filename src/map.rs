@@ -119,7 +119,9 @@ impl Map {
         //return vertex;
     }
     fn add_line(&mut self, start: Handle<Vertex>, end: Handle<Vertex>) -> Handle<Line> {
+        let index = self.lines.len();
         self.lines.push(Line{
+            index,
             start,
             end,
             flags: 0,
@@ -128,7 +130,7 @@ impl Map {
             front: None,
             back: None,
         });
-        (self.lines.len() - 1).into()
+        index.into()
     }
 
     pub fn iter_lines(&self) -> <Vec<BoundLine> as IntoIterator>::IntoIter {
@@ -355,6 +357,7 @@ impl Thing {
 }
 
 pub struct Line {
+    index: usize,
     start: Handle<Vertex>,
     end: Handle<Vertex>,
     flags: u32,
@@ -367,6 +370,10 @@ pub struct Line {
 }
 
 impl Line {
+    pub fn index(&self) -> usize {
+        self.index
+    }
+
     pub fn vertex_indices(&self) -> (Handle<Vertex>, Handle<Vertex>) {
         (self.start, self.end)
     }
@@ -417,6 +424,10 @@ impl<'a> BoundLine<'a> {
     }
 
     // TODO these are all delegates, eugh
+    pub fn index(&self) -> usize {
+        self.0.index()
+    }
+
     pub fn vertex_indices(&self) -> (Handle<Vertex>, Handle<Vertex>) {
         self.0.vertex_indices()
     }

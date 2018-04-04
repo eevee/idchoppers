@@ -31,9 +31,7 @@ use euclid::TypedSize2D;
 use typed_arena::Arena;
 
 
-const SPEW: bool = true;
-
-// const TEMP_SECTOR_COUNT: usize = 3;
+const SPEW: bool = false;
 
 
 use super::geom::MapSpace;
@@ -1602,9 +1600,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     let mut included_segments: Vec<&BoolSweepSegment> = Vec::with_capacity(count);
     let mut included_endpoints = Vec::with_capacity(count * 2);
     for segment in swept_segments.into_iter() {
-        // if segment.data.borrow().polygon_index < TEMP_SECTOR_COUNT {
-        //     continue;
-        // }
         if ! segment.data.borrow().is_in_result {
             continue;
         }

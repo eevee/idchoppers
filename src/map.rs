@@ -97,7 +97,12 @@ impl Map {
     }
 
     fn add_sector(&mut self) -> Handle<Sector> {
-        self.sectors.push(Sector{ special: 0, tag: 0, floor_height: 0, ceiling_height: 0 });
+        self.sectors.push(Sector {
+            special: 0,
+            tag: 0,
+            floor_height: 0,
+            ceiling_height: 0,
+        });
         (self.sectors.len() - 1).into()
     }
     fn add_side(&mut self, sector: Handle<Sector>) -> Handle<Side> {
@@ -158,12 +163,9 @@ impl Map {
     }
 
     pub fn find_player_start(&self) -> Option<Point> {
-        for thing in &self.things {
-            if thing.doomednum() == 1 {
-                return Some(thing.point());
-            }
-        }
-        None
+        self.things.iter()
+        .find(|thing| thing.doomednum() == 1)
+        .map(|thing| thing.point())
     }
 
     pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<Point>> {
@@ -190,7 +192,7 @@ impl Map {
             }
         }
 
-        let mut edges = vec![];
+        let mut edges = Vec::new();
         let mut vertices_to_edges = HashMap::new();
         // TODO linear scan -- would make more sense to turn the entire map into polygons in one go
         for line in &self.lines {
@@ -224,8 +226,12 @@ impl Map {
                         done: false,
                     };
                     edges.push(edge);
-                    vertices_to_edges.entry(VertexRef(v0)).or_insert_with(|| Vec::new()).push(edges.len() - 1);
-                    vertices_to_edges.entry(VertexRef(v1)).or_insert_with(|| Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(v0))
+                        .or_insert_with(Vec::new)
+                        .push(edges.len() - 1);
+                    vertices_to_edges.entry(VertexRef(v1))
+                        .or_insert_with(Vec::new)
+                        .push(edges.len() - 1);
                 }
             }
         }
@@ -235,7 +241,7 @@ impl Map {
         let mut outlines = Vec::new();
         let mut seen_vertices = HashMap::new();
         while edges.len() > 0 {
-            let mut next_vertices = vec![];
+            let mut next_vertices = Vec::new();
             for edge in edges.iter() {
                 // TODO having done-ness for both edges and vertices seems weird, idk
                 if !seen_vertices.contains_key(&VertexRef(edge.v0)) {

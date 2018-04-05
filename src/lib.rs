@@ -15,7 +15,7 @@ use std::str;
 use std::u8;
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
+use nom::{IResult, Needed, is_digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 
 pub mod errors;
 use errors::{ErrorKind, Result, nom_to_result};
@@ -90,33 +90,37 @@ pub enum MapFormat {
 
 named!(exmy_map_name<MapName>, do_parse!(
     tag!(b"E") >>
-    e: digit >>
+    e: verify!(le_u8, is_digit) >>
     tag!(b"M") >>
-    m: digit >>
+    m: verify!(le_u8, is_digit) >>
     eof!() >>
-    (MapName::ExMy(
-        // We already know e and m are digits, so this is all safe
-        u8::from_str(str::from_utf8(e).unwrap()).unwrap(),
-        u8::from_str(str::from_utf8(m).unwrap()).unwrap(),
-    ))
+    (MapName::ExMy(e - b'0', m - b'0'))
 ));
 
 named!(mapxx_map_name<MapName>, do_parse!(
     tag!(b"MAP") >>
-    xx: digit >>
+    xx: verify!(
+        map_res!(
+            map_res!(
+                take!(2),
+                str::from_utf8
+            ),
+            u8::from_str
+        ),
+        |v| v >= 1 && v <= 32
+    ) >>
     eof!() >>
-    (MapName::MAPxx(
-        // TODO need to enforce that xx is exactly two digits!  and also in [1, 32]
-        u8::from_str(str::from_utf8(xx).unwrap()).unwrap()
-    ))
+    (MapName::MAPxx(xx))
 ));
 
 named!(vanilla_map_name<MapName>, alt!(exmy_map_name | mapxx_map_name));
 
-
+/// Type of the WAD.
 #[derive(Copy, Clone, Debug)]
 pub enum WADType {
+    /// full standalone game
     IWAD,
+    /// patch wad, a small mod
     PWAD,
 }
 
@@ -145,7 +149,7 @@ pub struct WADArchive<'a> {
     // this buffer?
     buffer: &'a [u8],
 
-    /// Type of the WAD, either an IWAD (full standalone game) or PWAD (patch wad, a small mod).
+    /// WAD type for this archive
     pub wadtype: WADType,
 
     // Pairs of (name, data)
@@ -156,11 +160,26 @@ impl<'a> Archive for WADArchive<'a> {
 
 impl<'a> WADArchive<'a> {
     // TODO:
-    // first_entry(name)
-    // iter_entry(name)
-    // iter_between(_start, _end)
-    // iter_maps()
-    // iter_flats()
+    fn first_entry(&self, name: &str) -> Option<&WADEntry> {
+        self.entries.iter()
+        .find(|entry| entry.name == name)
+    }
+    
+    fn iter_entry(&self, name: &str) {
+        unimplemented!()
+    }
+    
+    fn iter_between(&self, _start: &str, _end: &str) {
+        unimplemented!()
+    }
+    
+    fn iter_maps(&self) {
+        unimplemented!()
+    }
+    
+    fn iter_flats(&self) {
+        unimplemented!()
+    }
     // TODO interesting things:
     // - find suspected markers that contain data
 }
@@ -200,16 +219,15 @@ impl<'n> BareWAD<'n> {
     }
 
     pub fn to_archive(&self) -> WADArchive {
-        let entries = self.directory.iter()
-            .map(|bare_entry| WADEntry{
-                name: Cow::from(bare_entry.name),
-                data: Cow::from(bare_entry.extract_slice(self.buffer))
-            })
-            .collect();
         WADArchive{
             buffer: self.buffer,
             wadtype: self.header.identification,
-            entries,
+            entries: self.directory.iter()
+                .map(|bare_entry| WADEntry{
+                    name: Cow::from(bare_entry.name),
+                    data: Cow::from(bare_entry.extract_slice(self.buffer))
+                })
+                .collect(),
         }
     }
 
@@ -221,57 +239,54 @@ impl<'n> BareWAD<'n> {
     }
 
     pub fn first_entry(&self, name: &str) -> Option<&[u8]> {
-        for entry in self.directory.iter() {
-            if entry.name == name {
-                let start = entry.filepos as usize;
-                let end = start + entry.size as usize;
-                // TODO what should this do if the offsets are bogus?
-                return Some(&self.buffer[start..end]);
-            }
-        }
-        None
+        self.directory.iter()
+        .find(|entry| entry.name == name)
+        .map(|entry| {
+            let start = entry.filepos as usize;
+            let end = start + entry.size as usize;
+            // TODO what should this do if the offsets are bogus?
+            &self.buffer[start..end]
+        })
     }
-
-    pub fn iter_entries_between(&self, begin_marker: &'n str, end_marker: &'n str) -> BareWADBetweenIterator {
-        BareWADBetweenIterator{
-            bare_wad: self,
-            entry_iter: self.directory.iter(),
-            begin_marker,
-            end_marker,
-            between_markers: false,
+    
+    pub fn iter_entries_between(&self, begin_marker: &str, end_marker: &str) -> BareWADBetweenIterator {
+        // TODO: deal with unwraps somehow?
+        let start = self.directory.iter()
+            .position(|entry| entry.name == begin_marker)
+            .unwrap();
+        let end = self.directory.iter()
+            .position(|entry| entry.name == end_marker)
+            .unwrap();
+        
+        BareWADBetweenIterator {
+            wad_buffer: self.buffer,
+            entries: &self.directory[start + 1..end],
         }
     }
     
     pub fn iter_maps(&self) -> WADMapIterator {
-        WADMapIterator{ archive: self, entry_iter: self.directory.iter().enumerate().peekable() }
+        WADMapIterator{
+            archive: self,
+            entry_iter: self.directory.iter().enumerate().peekable()
+        }
     }
 }
-pub struct BareWADBetweenIterator<'a> {
-    bare_wad: &'a BareWAD<'a>,
-    entry_iter: std::slice::Iter<'a, BareWADDirectoryEntry<'a>>,
-    begin_marker: &'a str,
-    end_marker: &'a str,
-    between_markers: bool,
+pub struct BareWADBetweenIterator<'wad> {
+    entries: &'wad [BareWADDirectoryEntry<'wad>],
+    wad_buffer: &'wad [u8],
 }
-impl<'a> Iterator for BareWADBetweenIterator<'a> {
-    type Item = WADEntry<'a>;
+impl<'w> Iterator for BareWADBetweenIterator<'w> {
+    type Item = WADEntry<'w>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while let Some(entry) = self.entry_iter.next() {
-            if entry.name == self.begin_marker {
-                self.between_markers = true;
+        self.entries.split_first()
+        .map(|(entry, entries)| {
+            self.entries = entries;
+            WADEntry {
+                name: Cow::from(entry.name),
+                data: Cow::from(entry.extract_slice(self.wad_buffer)),
             }
-            else if entry.name == self.end_marker {
-                self.between_markers = false;
-            }
-            else if self.between_markers {
-                return Some(WADEntry{
-                    name: Cow::from(entry.name),
-                    data: Cow::from(entry.extract_slice(self.bare_wad.buffer)),
-                });
-            }
-        }
-        None
+        })
     }
 }
 
@@ -310,7 +325,7 @@ impl<'n> BareWADDirectoryEntry<'n> {
     }
 }
 
-fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
+fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     if input.len() < len {
         return IResult::Incomplete(Needed::Size(len));
     }
@@ -744,16 +759,16 @@ impl BareBinaryLine for BareHexenLine {
 }
 
 #[derive(Debug)]
-pub struct BareSide<'a> {
+pub struct BareSide<'tex> {
     pub x_offset: i16,
     pub y_offset: i16,
-    pub upper_texture: &'a str,
-    pub lower_texture: &'a str,
-    pub middle_texture: &'a str,
+    pub upper_texture: &'tex str,
+    pub lower_texture: &'tex str,
+    pub middle_texture: &'tex str,
     pub sector: i16,
 }
 
-impl<'a> BareSide<'a> {
+impl<'t> BareSide<'t> {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
         writer.write_i16::<LittleEndian>(self.x_offset)?;
         writer.write_i16::<LittleEndian>(self.y_offset)?;
@@ -837,17 +852,17 @@ named!(vertexes_lump<Vec<BareVertex>>, terminated!(many0!(do_parse!(
 
 
 #[derive(Debug)]
-pub struct BareSector<'a> {
+pub struct BareSector<'tex> {
     pub floor_height: i16,
     pub ceiling_height: i16,
-    pub floor_texture: &'a str,
-    pub ceiling_texture: &'a str,
+    pub floor_texture: &'tex str,
+    pub ceiling_texture: &'tex str,
     pub light: i16,  // XXX what??  light can only go up to 255!
     pub sector_type: i16,  // TODO check if these are actually signed or what
     pub sector_tag: i16,
 }
 
-impl<'a> BareSector<'a> {
+impl<'t> BareSector<'t> {
     pub fn write_to(&self, writer: &mut Write) -> Result<()> {
         writer.write_i16::<LittleEndian>(self.floor_height)?;
         writer.write_i16::<LittleEndian>(self.ceiling_height)?;
@@ -989,7 +1004,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
         struct VertexRef<'a>(&'a BareVertex);
         impl<'a> PartialEq for VertexRef<'a> {
             fn eq(&self, other: &VertexRef) -> bool {
-                return (self.0 as *const _) == (other.0 as *const _);
+                (self.0 as *const _) == (other.0 as *const _)
             }
         }
         impl<'a> Eq for VertexRef<'a> {}
@@ -999,7 +1014,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
             }
         }
 
-        let mut edges = vec![];
+        let mut edges = Vec::new();
         let mut vertices_to_edges = HashMap::new();
         // TODO linear scan -- would make more sense to turn the entire map into polygons in one go
         for line in self.lines.iter() {
@@ -1027,8 +1042,14 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
                         done: false,
                     };
                     edges.push(edge);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[v0 as usize])).or_insert(Vec::new()).push(edges.len() - 1);
-                    vertices_to_edges.entry(VertexRef(&self.vertices[v1 as usize])).or_insert(Vec::new()).push(edges.len() - 1);
+                    vertices_to_edges
+                        .entry(VertexRef(&self.vertices[v0 as usize]))
+                        .or_insert_with(Vec::new)
+                        .push(edges.len() - 1);
+                    vertices_to_edges
+                        .entry(VertexRef(&self.vertices[v1 as usize]))
+                        .or_insert_with(Vec::new)
+                        .push(edges.len() - 1);
                 }
             }
         }
@@ -1038,7 +1059,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
         let mut outlines = Vec::new();
         let mut seen_vertices = HashMap::new();
         while edges.len() > 0 {
-            let mut next_vertices = vec![];
+            let mut next_vertices = Vec::new();
             for edge in edges.iter() {
                 // TODO having done-ness for both edges and vertices seems weird, idk
                 if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
@@ -1099,7 +1120,7 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
 
     // TODO of course, this doesn't take later movement of sectors into account, dammit
     pub fn count_textures(&self) -> HashMap<&str, (usize, f32)> {
-        let mut counts: HashMap<_, (usize, f32)> = HashMap::new();
+        let mut counts = HashMap::new();
 
         // This block exists only so `add` goes out of scope (and stops borrowing counts) before we
         // return; I don't know why the compiler cares when `add` clearly doesn't escape
@@ -1197,15 +1218,15 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
 }
 
 
-pub struct TEXTURExEntry<'a> {
-    pub name: &'a str,
+pub struct TEXTURExEntry<'name> {
+    pub name: &'name str,
     pub width: i16,
     pub height: i16,
 }
 
 named!(texturex_lump_header<Vec<i32>>, do_parse!(
     numtextures: le_i32 >>
-    offsets: many_m_n!(numtextures as usize, numtextures as usize, le_i32) >>
+    offsets: count!(le_i32, numtextures as usize) >>
     (offsets)
 ));
 

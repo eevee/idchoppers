@@ -159,25 +159,25 @@ impl<'a> Archive for WADArchive<'a> {
 }
 
 impl<'a> WADArchive<'a> {
-    // TODO:
-    fn first_entry(&self, name: &str) -> Option<&WADEntry> {
+    pub fn first_entry(&self, name: &str) -> Option<&WADEntry> {
         self.entries.iter()
         .find(|entry| entry.name == name)
     }
     
-    fn iter_entry(&self, name: &str) {
+    // TODO:
+    pub fn iter_entry(&self, name: &str) {
         unimplemented!()
     }
     
-    fn iter_between(&self, _start: &str, _end: &str) {
+    pub fn iter_between(&self, _start: &str, _end: &str) {
         unimplemented!()
     }
     
-    fn iter_maps(&self) {
+    pub fn iter_maps(&self) {
         unimplemented!()
     }
     
-    fn iter_flats(&self) {
+    pub fn iter_flats(&self) {
         unimplemented!()
     }
     // TODO interesting things:

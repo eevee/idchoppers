@@ -93,14 +93,7 @@ fn run() -> Result<()> {
 }
 
 fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
-    match wad.header.identification {
-        idchoppers::WADType::IWAD => {
-            println!("IWAD");
-        }
-        idchoppers::WADType::PWAD => {
-            println!("PWAD");
-        }
-    }
+    println!("{:?}", wad.header.identification);
 
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {

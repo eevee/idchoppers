@@ -1,5 +1,5 @@
 use super::BareDoomMap;
-use super::geom::{Coord, Point, Rect, Size};
+use super::geom::{Coord, Point, Rect};
 
 use std::collections::HashMap;
 use std::marker::PhantomData;

@@ -104,7 +104,7 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {
-        use std::cmp::Ordering::Equal;
+        // use std::cmp::Ordering::Equal;
         
         let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         match bare_map {

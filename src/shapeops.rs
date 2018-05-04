@@ -6,7 +6,7 @@
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
-use svg::node::element::{Group, Line, Path, Rectangle, Style, Text};
+use svg::node::element::{Group, Line, Path, Style, Text};
 use svg::node::element::path::Data;
 
 

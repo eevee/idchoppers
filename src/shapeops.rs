@@ -492,14 +492,14 @@ impl Contour {
         ! self.clockwise()
     }
 
-    fn move_by(&mut self, dx: f64, dy: f64) {
+    fn _move_by(&mut self, dx: f64, dy: f64) {
         for point in self.points.iter_mut() {
             *point = MapPoint::new(point.x + dx, point.y + dy);
         }
     }
 
     /// Get the p-th vertex of the external contour
-    fn vertex(&self, p: usize) -> MapPoint { self.points[p] }
+    fn _vertex(&self, p: usize) -> MapPoint { self.points[p] }
     fn segment(&self, p: usize) -> Segment2 {
         if p == self.points.len() - 1 {
             Segment2::new(*self.points.last().unwrap(), self.points[0])
@@ -538,23 +538,23 @@ impl Contour {
     pub fn add(&mut self, s: MapPoint) {
         self.points.push(s);
     }
-    fn erase(&mut self, i: usize) {
+    fn _erase(&mut self, i: usize) {
         self.points.remove(i);
     }
-    fn clear(&mut self) {
+    fn _clear(&mut self) {
         self.points.clear();
         self.holes.clear();
     }
-    fn clearHoles(&mut self) {
+    fn _clearHoles(&mut self) {
         self.holes.clear();
     }
-    fn last(&self) -> MapPoint {
+    fn _last(&self) -> MapPoint {
         *self.points.last().unwrap()
     }
     fn addHole(&mut self, ind: usize) {
         self.holes.push(ind);
     }
-    fn hole(&self, p: usize) -> usize {
+    fn _hole(&self, p: usize) -> usize {
         self.holes[p]
     }
     pub fn external(&self) -> bool {
@@ -596,11 +596,11 @@ impl Polygon {
     }
 
     /// Get the p-th contour
-    fn contour(&self, p: usize) -> &Contour {
+    fn _contour(&self, p: usize) -> &Contour {
         &self.contours[p]
     }
 
-    fn join(&mut self, mut pol: Polygon) {
+    fn _join(&mut self, mut pol: Polygon) {
         let size = self.contours.len();
         for mut contour in pol.contours.drain(..) {
             for mut hole in &mut contour.holes {
@@ -625,9 +625,9 @@ impl Polygon {
         bbox
     }
 
-    fn move_by(&mut self, dx: f64, dy: f64) {
+    fn _move_by(&mut self, dx: f64, dy: f64) {
         for contour in self.contours.iter_mut() {
-            contour.move_by(dx, dy);
+            contour._move_by(dx, dy);
         }
     }
 
@@ -836,22 +836,22 @@ impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
         }
     }
 
-    fn is_one_sided(&self) -> bool {
-        self.0.is_one_sided()
+    fn _is_one_sided(&self) -> bool {
+        self.0._is_one_sided()
     }
 
-    fn faces_void(&self) -> bool {
+    fn _faces_void(&self) -> bool {
         let packet = self.0.data.borrow();
         // We face into the void iff we're in no other polygons, and we're the side of the segment
         // facing outwards from our original polygon.
-        self.is_one_sided() &&
+        self._is_one_sided() &&
             (self.1 == SegmentEnd::Left) == packet.up_faces_outwards
     }
 }
 
 type BoolSweepSegment = SweepSegment<RefCell<SegmentPacket>>;
 impl BoolSweepSegment {
-    fn is_one_sided(&self) -> bool {
+    fn _is_one_sided(&self) -> bool {
         let packet = self.data.borrow();
         packet.left_faces_polygons.none() || packet.right_faces_polygons.none()
     }

@@ -524,12 +524,12 @@ impl Contour {
             self._is_clockwise.set(Some(! cc));
         }
     }
-    pub fn setClockwise(&mut self) {
+    pub fn set_clockwise(&mut self) {
         if self.counterclockwise() {
             self.change_orientation();
         }
     }
-    pub fn setCounterClockwise(&mut self) {
+    pub fn set_counterclockwise(&mut self) {
         if self.clockwise() {
             self.change_orientation();
         }
@@ -545,13 +545,13 @@ impl Contour {
         self.points.clear();
         self.holes.clear();
     }
-    fn _clearHoles(&mut self) {
+    fn _clear_holes(&mut self) {
         self.holes.clear();
     }
     fn _last(&self) -> MapPoint {
         *self.points.last().unwrap()
     }
-    fn addHole(&mut self, ind: usize) {
+    fn add_hole(&mut self, ind: usize) {
         self.holes.push(ind);
     }
     fn _hole(&self, p: usize) -> usize {
@@ -560,7 +560,7 @@ impl Contour {
     pub fn external(&self) -> bool {
         self._external
     }
-    fn setExternal(&mut self, e: bool) {
+    fn set_external(&mut self, e: bool) {
         self._external = e;
     }
 }
@@ -642,7 +642,7 @@ impl Polygon {
         let mut segments_mut = Vec::with_capacity(self.nvertices());
         for (contour_id, contour) in self.contours.iter_mut().enumerate() {
             // Initialize every contour to ccw; we'll fix them all in a moment
-            contour.setCounterClockwise();
+            contour.set_counterclockwise();
 
             for (point_id, segment) in contour.iter_segments().iter().enumerate() {
                 // vertical segments are not processed
@@ -711,7 +711,7 @@ impl Polygon {
                 Some(segment) => { segment }
                 None => {
                     // We're on the outside, so set us ccw and continue
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                     continue;
                 }
             };
@@ -719,28 +719,28 @@ impl Polygon {
 
             if ! prev_segment.faces_outwards {
                 hole_of[contour_id] = Some(prev_contour_id);
-                self.contours[contour_id].setExternal(false);
-                self.contours[prev_contour_id].addHole(contour_id);
+                self.contours[contour_id].set_external(false);
+                self.contours[prev_contour_id].add_hole(contour_id);
                 if self.contours[prev_contour_id].counterclockwise() {
-                    self.contours[contour_id].setClockwise();
+                    self.contours[contour_id].set_clockwise();
                 }
                 else {
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                 }
             }
             else if let Some(parent) = hole_of[prev_contour_id] {
                 hole_of[contour_id] = Some(parent);
-                self.contours[contour_id].setExternal(false);
-                self.contours[parent].addHole(contour_id);
+                self.contours[contour_id].set_external(false);
+                self.contours[parent].add_hole(contour_id);
                 if self.contours[parent].counterclockwise() {
-                    self.contours[contour_id].setClockwise();
+                    self.contours[contour_id].set_clockwise();
                 }
                 else {
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                 }
             }
             else {
-                self.contours[contour_id].setCounterClockwise();
+                self.contours[contour_id].set_counterclockwise();
             }
         }
     }
@@ -1628,8 +1628,8 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
                 let below_segment = &segment_order[below_segment_id];
                 let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
                 println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
-                final_polygon[parent_contour_id].addHole(contour_id);
-                final_polygon[contour_id].setExternal(false);
+                final_polygon[parent_contour_id].add_hole(contour_id);
+                final_polygon[contour_id].set_external(false);
             }
             else {
                 println!("!!! can't find the counter i'm a hole of");

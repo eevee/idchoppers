@@ -59,7 +59,7 @@ fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Segment2 {
     source: MapPoint,
     target: MapPoint,
@@ -1666,5 +1666,17 @@ mod tests {
         let iter = contour.iter_segments();
 
         assert!(iter.is_empty());
+    }
+
+    #[test]
+    fn test_contour_many_segments() {
+        let mut contour = Contour::new();
+        contour.add(MapPoint::new(0.0, 0.0));
+        contour.add(MapPoint::new(1.0, 1.0));
+        contour.add(MapPoint::new(2.0, 2.0));
+
+        for (i, p) in contour.iter_segments().iter().enumerate() {
+            assert_eq!(*p, contour.segment(i));
+        }
     }
 }

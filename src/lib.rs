@@ -310,7 +310,7 @@ impl<'n> BareWADDirectoryEntry<'n> {
     }
 }
 
-fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
+fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     if input.len() < len {
         return IResult::Incomplete(Needed::Size(len));
     }

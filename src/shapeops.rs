@@ -500,6 +500,8 @@ impl Contour {
 
     /// Get the p-th vertex of the external contour
     fn _vertex(&self, p: usize) -> MapPoint { self.points[p] }
+
+    #[cfg(test)]
     fn segment(&self, p: usize) -> Segment2 {
         if p == self.points.len() - 1 {
             Segment2::new(*self.points.last().unwrap(), self.points[0])
@@ -509,7 +511,6 @@ impl Contour {
         }
     }
 
-    // TODO this could be an actual iterator y'know
     fn iter_segments(&self) -> ContourSegments {
         ContourSegments {
             contour: self,
@@ -573,10 +574,20 @@ impl<'a> Iterator for ContourSegments<'a> {
     type Item = Segment2;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.index < self.contour.points.len() {
-            let i = self.index;
-            self.index += 1;
-            Some(self.contour.segment(i))
+        let len = self.contour.points.len();
+
+        if len == 0 {
+            return None;
+        }
+
+        let i = self.index;
+
+        self.index += 1;
+
+        if i < len - 1 {
+            Some(Segment2::new(self.contour.points[i], self.contour.points[i + 1]))
+        } else if i == len - 1 {
+            Some(Segment2::new(self.contour.points[i], self.contour.points[0]))
         } else {
             None
         }

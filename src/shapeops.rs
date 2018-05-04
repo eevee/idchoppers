@@ -1191,8 +1191,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     }
 }
 
-// TODO what if i have a slice of polygons, or a vec of &Polygons, or...?
-pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
+pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
     // ---------------------------------------------------------------------------------------------
     // Detect trivial cases that can be answered without doing any work
 

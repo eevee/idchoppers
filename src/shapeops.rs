@@ -510,12 +510,11 @@ impl Contour {
     }
 
     // TODO this could be an actual iterator y'know
-    fn iter_segments(&self) -> Vec<Segment2> {
-        let mut ret = Vec::new();
-        for i in 0 .. self.points.len() {
-            ret.push(self.segment(i));
+    fn iter_segments(&self) -> ContourSegments {
+        ContourSegments {
+            contour: self,
+            index: 0,
         }
-        ret
     }
 
     pub fn change_orientation(&mut self) {
@@ -562,6 +561,25 @@ impl Contour {
     }
     fn set_external(&mut self, e: bool) {
         self._external = e;
+    }
+}
+
+struct ContourSegments<'a> {
+    contour: &'a Contour,
+    index: usize,
+}
+
+impl<'a> Iterator for ContourSegments<'a> {
+    type Item = Segment2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.index < self.contour.points.len() {
+            let i = self.index;
+            self.index += 1;
+            Some(self.contour.segment(i))
+        } else {
+            None
+        }
     }
 }
 
@@ -644,7 +662,7 @@ impl Polygon {
             // Initialize every contour to ccw; we'll fix them all in a moment
             contour.set_counterclockwise();
 
-            for (point_id, segment) in contour.iter_segments().iter().enumerate() {
+            for (point_id, segment) in contour.iter_segments().enumerate() {
                 // vertical segments are not processed
                 if segment.is_vertical() {
                     continue;
@@ -1666,7 +1684,7 @@ mod tests {
         let contour = Contour::new();
         let iter = contour.iter_segments();
 
-        assert!(iter.is_empty());
+        assert_eq!(iter.count(), 0);
     }
 
     #[test]
@@ -1676,8 +1694,8 @@ mod tests {
         contour.add(MapPoint::new(1.0, 1.0));
         contour.add(MapPoint::new(2.0, 2.0));
 
-        for (i, p) in contour.iter_segments().iter().enumerate() {
-            assert_eq!(*p, contour.segment(i));
+        for (i, p) in contour.iter_segments().enumerate() {
+            assert_eq!(p, contour.segment(i));
         }
     }
 }

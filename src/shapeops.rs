@@ -33,7 +33,7 @@ use typed_arena::Arena;
 
 const SPEW: bool = false;
 
-const TEMP_SECTOR_COUNT: usize = 3;
+// const TEMP_SECTOR_COUNT: usize = 3;
 
 
 use super::geom::MapSpace;

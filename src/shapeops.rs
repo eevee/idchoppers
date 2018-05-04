@@ -1655,3 +1655,16 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
 
     final_polygon
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contour_empty_segments() {
+        let contour = Contour::new();
+        let iter = contour.iter_segments();
+
+        assert!(iter.is_empty());
+    }
+}

@@ -84,6 +84,7 @@ fn run() -> Result<()> {
     match args.subcommand() {
         ("info", Some(subargs)) /* | (_, None) */ => { do_info(&args, &subargs, &wad)? },
         ("chart", Some(subargs)) => { do_chart(&args, &subargs, &wad)? },
+        ("flip", Some(subargs)) => { do_flip(&args, &subargs, &wad)? },
         ("shapeops", Some(_subargs)) => { do_shapeops()? },
         ("route", Some(subargs)) => { do_route(&args, &subargs, &wad)? },
         _ => { println!("????"); /* TODO bogus */ },

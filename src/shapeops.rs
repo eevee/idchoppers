@@ -699,7 +699,7 @@ impl Polygon {
             // This is a LEFT endpoint; add this as a new active segment
             active_segments.insert(segment);
 
-            let (contour_id, segment_id) = segment.data;
+            let (contour_id, _segment_id) = segment.data;
             if processed[contour_id] {
                 continue;
             }
@@ -715,7 +715,7 @@ impl Polygon {
                     continue;
                 }
             };
-            let (prev_contour_id, prev_segment_id) = prev_segment.data;
+            let (prev_contour_id, _prev_segment_id) = prev_segment.data;
 
             if ! prev_segment.faces_outwards {
                 hole_of[contour_id] = Some(prev_contour_id);
@@ -1010,7 +1010,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 
             // The line segments associated to le1 and le2 overlap
             let left_coincide = seg1.left_point == seg2.left_point;
-            let right_coincide = seg1.right_point == seg2.right_point;
+            // let right_coincide = seg1.right_point == seg2.right_point;
             let left_cmp = compare_points(seg1.left_point, seg2.left_point);
             let right_cmp = compare_points(seg1.right_point, seg2.right_point);
 
@@ -1375,10 +1375,10 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
                 println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
             }
         }
-        let endpoint = match end {
-            SegmentEnd::Left => segment.left_point,
-            SegmentEnd::Right => segment.right_point,
-        };
+        // let endpoint = match end {
+        //     SegmentEnd::Left => segment.left_point,
+        //     SegmentEnd::Right => segment.right_point,
+        // };
         /* TODO restore these
         // optimization 2
         if operation == BooleanOpType::Intersection && endpoint.x > MINMAXX {
@@ -1559,7 +1559,7 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
     // Construct the final polygon by grouping the segments together into contours
 
     let mut final_polygon = Polygon::new();
-    for (i, endpoint) in included_endpoints.iter().enumerate() {
+    for endpoint in included_endpoints.iter() {
         let &SweepEndpoint(segment, end) = endpoint;
         if endpoint.is_processed() {
             continue;
@@ -1621,7 +1621,7 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         // whether i'm "inside" or "outside"?
         // XXX can this happen for two-sided lines as well?
         if final_polygon[contour_id].clockwise() {
-            let &SweepEndpoint(segment, end) = current_endpoint;
+            let &SweepEndpoint(segment, _end) = current_endpoint;
 
             if let Some(below_segment_id) = segment.data.borrow().below_in_result {
                 // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!

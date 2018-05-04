@@ -1509,7 +1509,8 @@ pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
         .add(svg_swept_group)
         .add(svg_active_group)
     ;
-    svg::save("idchoppers-shapeops-debug.svg", &doc);
+    svg::save("idchoppers-shapeops-debug.svg", &doc)
+        .expect("could not save idchoppers-shapeops-debug.svg");
     }
 
     // connect the solution edges to build the result polygon

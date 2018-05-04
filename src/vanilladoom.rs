@@ -3,7 +3,7 @@
 
 use super::universe::{ActorType, ThingCategory};
 
-static DOOM2_SPRITES: [&str; 138] = [
+static _DOOM2_SPRITES: [&str; 138] = [
     "TROO","SHTG","PUNG","PISG","PISF","SHTF","SHT2","CHGG","CHGF","MISG",
     "MISF","SAWG","PLSG","PLSF","BFGG","BFGF","BLUD","PUFF","BAL1","BAL2",
     "PLSS","PLSE","MISL","BFS1","BFE1","BFE2","TFOG","IFOG","PLAY","POSS",

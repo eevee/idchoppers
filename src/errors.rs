@@ -72,7 +72,7 @@ pub(crate) fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResu
 
 use std::collections::HashMap;
 pub fn display_error<O>(input: &[u8], res: IResult<&[u8], O>) {
-    let mut h: HashMap<u32, &str> = HashMap::new();
+    let h: HashMap<u32, &str> = HashMap::new();
 
     if let Some(v) = prepare_errors(input, res) {
         let colors = generate_colors(&v);

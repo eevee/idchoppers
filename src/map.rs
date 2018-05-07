@@ -1,5 +1,5 @@
 use super::BareDoomMap;
-use super::geom::{Coord, Point, Rect, Size};
+use super::geom::{Coord, Point, Rect};
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
@@ -31,7 +31,7 @@ pub struct Map {
     things: Vec<Thing>,
     vertices: Vec<Vertex>,
 
-    bbox: Option<Rect>,
+    _bbox: Option<Rect>,
 }
 
 impl Map {
@@ -43,7 +43,7 @@ impl Map {
             things: Vec::new(),
             vertices: Vec::new(),
 
-            bbox: None,
+            _bbox: None,
         }
     }
     pub fn from_bare(bare_map: &BareDoomMap) -> Self {
@@ -168,9 +168,9 @@ impl Map {
 
     pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<Point>> {
         struct Edge<'a> {
-            line: &'a Line,
-            side: &'a Side,
-            facing: Facing,
+            _line: &'a Line,
+            _side: &'a Side,
+            _facing: Facing,
             v0: &'a Vertex,
             v1: &'a Vertex,
             done: bool,
@@ -215,9 +215,9 @@ impl Map {
                     let v0 = &self.vertices[line.start.0];
                     let v1 = &self.vertices[line.end.0];
                     let edge = Edge{
-                        line,
-                        side,
-                        facing,
+                        _line: line,
+                        _side: side,
+                        _facing: facing,
                         // TODO should these be swapped depending on the line facing?
                         v0,
                         v1,

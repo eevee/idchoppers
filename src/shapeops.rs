@@ -6,7 +6,7 @@
 extern crate svg;
 use svg::Document;
 use svg::node::Node;
-use svg::node::element::{Group, Line, Path, Rectangle, Style, Text};
+use svg::node::element::{Group, Line, Path, Style, Text};
 use svg::node::element::path::Data;
 
 
@@ -33,7 +33,7 @@ use typed_arena::Arena;
 
 const SPEW: bool = false;
 
-const TEMP_SECTOR_COUNT: usize = 3;
+// const TEMP_SECTOR_COUNT: usize = 3;
 
 
 use super::geom::MapSpace;
@@ -59,7 +59,7 @@ fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
 }
 
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Segment2 {
     source: MapPoint,
     target: MapPoint,
@@ -492,14 +492,16 @@ impl Contour {
         ! self.clockwise()
     }
 
-    fn move_by(&mut self, dx: f64, dy: f64) {
+    fn _move_by(&mut self, dx: f64, dy: f64) {
         for point in self.points.iter_mut() {
             *point = MapPoint::new(point.x + dx, point.y + dy);
         }
     }
 
     /// Get the p-th vertex of the external contour
-    fn vertex(&self, p: usize) -> MapPoint { self.points[p] }
+    fn _vertex(&self, p: usize) -> MapPoint { self.points[p] }
+
+    #[cfg(test)]
     fn segment(&self, p: usize) -> Segment2 {
         if p == self.points.len() - 1 {
             Segment2::new(*self.points.last().unwrap(), self.points[0])
@@ -509,13 +511,11 @@ impl Contour {
         }
     }
 
-    // TODO this could be an actual iterator y'know
-    fn iter_segments(&self) -> Vec<Segment2> {
-        let mut ret = Vec::new();
-        for i in 0 .. self.points.len() {
-            ret.push(self.segment(i));
+    fn iter_segments(&self) -> ContourSegments {
+        ContourSegments {
+            contour: self,
+            index: 0,
         }
-        ret
     }
 
     pub fn change_orientation(&mut self) {
@@ -524,12 +524,12 @@ impl Contour {
             self._is_clockwise.set(Some(! cc));
         }
     }
-    pub fn setClockwise(&mut self) {
+    pub fn set_clockwise(&mut self) {
         if self.counterclockwise() {
             self.change_orientation();
         }
     }
-    pub fn setCounterClockwise(&mut self) {
+    pub fn set_counterclockwise(&mut self) {
         if self.clockwise() {
             self.change_orientation();
         }
@@ -538,30 +538,59 @@ impl Contour {
     pub fn add(&mut self, s: MapPoint) {
         self.points.push(s);
     }
-    fn erase(&mut self, i: usize) {
+    fn _erase(&mut self, i: usize) {
         self.points.remove(i);
     }
-    fn clear(&mut self) {
+    fn _clear(&mut self) {
         self.points.clear();
         self.holes.clear();
     }
-    fn clearHoles(&mut self) {
+    fn _clear_holes(&mut self) {
         self.holes.clear();
     }
-    fn last(&self) -> MapPoint {
+    fn _last(&self) -> MapPoint {
         *self.points.last().unwrap()
     }
-    fn addHole(&mut self, ind: usize) {
+    fn add_hole(&mut self, ind: usize) {
         self.holes.push(ind);
     }
-    fn hole(&self, p: usize) -> usize {
+    fn _hole(&self, p: usize) -> usize {
         self.holes[p]
     }
     pub fn external(&self) -> bool {
         self._external
     }
-    fn setExternal(&mut self, e: bool) {
+    fn set_external(&mut self, e: bool) {
         self._external = e;
+    }
+}
+
+struct ContourSegments<'a> {
+    contour: &'a Contour,
+    index: usize,
+}
+
+impl<'a> Iterator for ContourSegments<'a> {
+    type Item = Segment2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let len = self.contour.points.len();
+
+        if len == 0 {
+            return None;
+        }
+
+        let i = self.index;
+
+        self.index += 1;
+
+        if i < len - 1 {
+            Some(Segment2::new(self.contour.points[i], self.contour.points[i + 1]))
+        } else if i == len - 1 {
+            Some(Segment2::new(self.contour.points[i], self.contour.points[0]))
+        } else {
+            None
+        }
     }
 }
 
@@ -596,11 +625,11 @@ impl Polygon {
     }
 
     /// Get the p-th contour
-    fn contour(&self, p: usize) -> &Contour {
+    fn _contour(&self, p: usize) -> &Contour {
         &self.contours[p]
     }
 
-    fn join(&mut self, mut pol: Polygon) {
+    fn _join(&mut self, mut pol: Polygon) {
         let size = self.contours.len();
         for mut contour in pol.contours.drain(..) {
             for mut hole in &mut contour.holes {
@@ -625,9 +654,9 @@ impl Polygon {
         bbox
     }
 
-    fn move_by(&mut self, dx: f64, dy: f64) {
+    fn _move_by(&mut self, dx: f64, dy: f64) {
         for contour in self.contours.iter_mut() {
-            contour.move_by(dx, dy);
+            contour._move_by(dx, dy);
         }
     }
 
@@ -642,9 +671,9 @@ impl Polygon {
         let mut segments_mut = Vec::with_capacity(self.nvertices());
         for (contour_id, contour) in self.contours.iter_mut().enumerate() {
             // Initialize every contour to ccw; we'll fix them all in a moment
-            contour.setCounterClockwise();
+            contour.set_counterclockwise();
 
-            for (point_id, segment) in contour.iter_segments().iter().enumerate() {
+            for (point_id, segment) in contour.iter_segments().enumerate() {
                 // vertical segments are not processed
                 if segment.is_vertical() {
                     continue;
@@ -699,7 +728,7 @@ impl Polygon {
             // This is a LEFT endpoint; add this as a new active segment
             active_segments.insert(segment);
 
-            let (contour_id, segment_id) = segment.data;
+            let (contour_id, _segment_id) = segment.data;
             if processed[contour_id] {
                 continue;
             }
@@ -711,36 +740,36 @@ impl Polygon {
                 Some(segment) => { segment }
                 None => {
                     // We're on the outside, so set us ccw and continue
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                     continue;
                 }
             };
-            let (prev_contour_id, prev_segment_id) = prev_segment.data;
+            let (prev_contour_id, _prev_segment_id) = prev_segment.data;
 
             if ! prev_segment.faces_outwards {
                 hole_of[contour_id] = Some(prev_contour_id);
-                self.contours[contour_id].setExternal(false);
-                self.contours[prev_contour_id].addHole(contour_id);
+                self.contours[contour_id].set_external(false);
+                self.contours[prev_contour_id].add_hole(contour_id);
                 if self.contours[prev_contour_id].counterclockwise() {
-                    self.contours[contour_id].setClockwise();
+                    self.contours[contour_id].set_clockwise();
                 }
                 else {
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                 }
             }
             else if let Some(parent) = hole_of[prev_contour_id] {
                 hole_of[contour_id] = Some(parent);
-                self.contours[contour_id].setExternal(false);
-                self.contours[parent].addHole(contour_id);
+                self.contours[contour_id].set_external(false);
+                self.contours[parent].add_hole(contour_id);
                 if self.contours[parent].counterclockwise() {
-                    self.contours[contour_id].setClockwise();
+                    self.contours[contour_id].set_clockwise();
                 }
                 else {
-                    self.contours[contour_id].setCounterClockwise();
+                    self.contours[contour_id].set_counterclockwise();
                 }
             }
             else {
-                self.contours[contour_id].setCounterClockwise();
+                self.contours[contour_id].set_counterclockwise();
             }
         }
     }
@@ -836,22 +865,22 @@ impl<'a> SweepEndpoint<'a, RefCell<SegmentPacket>> {
         }
     }
 
-    fn is_one_sided(&self) -> bool {
-        self.0.is_one_sided()
+    fn _is_one_sided(&self) -> bool {
+        self.0._is_one_sided()
     }
 
-    fn faces_void(&self) -> bool {
+    fn _faces_void(&self) -> bool {
         let packet = self.0.data.borrow();
         // We face into the void iff we're in no other polygons, and we're the side of the segment
         // facing outwards from our original polygon.
-        self.is_one_sided() &&
+        self._is_one_sided() &&
             (self.1 == SegmentEnd::Left) == packet.up_faces_outwards
     }
 }
 
 type BoolSweepSegment = SweepSegment<RefCell<SegmentPacket>>;
 impl BoolSweepSegment {
-    fn is_one_sided(&self) -> bool {
+    fn _is_one_sided(&self) -> bool {
         let packet = self.data.borrow();
         packet.left_faces_polygons.none() || packet.right_faces_polygons.none()
     }
@@ -1010,7 +1039,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 
             // The line segments associated to le1 and le2 overlap
             let left_coincide = seg1.left_point == seg2.left_point;
-            let right_coincide = seg1.right_point == seg2.right_point;
+            // let right_coincide = seg1.right_point == seg2.right_point;
             let left_cmp = compare_points(seg1.left_point, seg2.left_point);
             let right_cmp = compare_points(seg1.right_point, seg2.right_point);
 
@@ -1191,8 +1220,7 @@ fn find_next_segment<'a>(current_endpoint: &'a BoolSweepEndpoint<'a>, included_e
     }
 }
 
-// TODO what if i have a slice of polygons, or a vec of &Polygons, or...?
-pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
+pub fn compute(polygons: &[Polygon], operation: BooleanOpType) -> Polygon {
     // ---------------------------------------------------------------------------------------------
     // Detect trivial cases that can be answered without doing any work
 
@@ -1376,10 +1404,10 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
                 println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
             }
         }
-        let endpoint = match end {
-            SegmentEnd::Left => segment.left_point,
-            SegmentEnd::Right => segment.right_point,
-        };
+        // let endpoint = match end {
+        //     SegmentEnd::Left => segment.left_point,
+        //     SegmentEnd::Right => segment.right_point,
+        // };
         /* TODO restore these
         // optimization 2
         if operation == BooleanOpType::Intersection && endpoint.x > MINMAXX {
@@ -1510,7 +1538,8 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         .add(svg_swept_group)
         .add(svg_active_group)
     ;
-    svg::save("idchoppers-shapeops-debug.svg", &doc);
+    svg::save("idchoppers-shapeops-debug.svg", &doc)
+        .expect("could not save idchoppers-shapeops-debug.svg");
     }
 
     // connect the solution edges to build the result polygon
@@ -1560,7 +1589,7 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     // Construct the final polygon by grouping the segments together into contours
 
     let mut final_polygon = Polygon::new();
-    for (i, endpoint) in included_endpoints.iter().enumerate() {
+    for endpoint in included_endpoints.iter() {
         let &SweepEndpoint(segment, end) = endpoint;
         if endpoint.is_processed() {
             continue;
@@ -1622,15 +1651,15 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
         // whether i'm "inside" or "outside"?
         // XXX can this happen for two-sided lines as well?
         if final_polygon[contour_id].clockwise() {
-            let &SweepEndpoint(segment, end) = current_endpoint;
+            let &SweepEndpoint(segment, _end) = current_endpoint;
 
             if let Some(below_segment_id) = segment.data.borrow().below_in_result {
                 // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
                 let below_segment = &segment_order[below_segment_id];
                 let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
                 println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
-                final_polygon[parent_contour_id].addHole(contour_id);
-                final_polygon[contour_id].setExternal(false);
+                final_polygon[parent_contour_id].add_hole(contour_id);
+                final_polygon[contour_id].set_external(false);
             }
             else {
                 println!("!!! can't find the counter i'm a hole of");
@@ -1655,4 +1684,29 @@ pub fn compute(polygons: &Vec<Polygon>, operation: BooleanOpType) -> Polygon {
     }
 
     final_polygon
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_contour_empty_segments() {
+        let contour = Contour::new();
+        let iter = contour.iter_segments();
+
+        assert_eq!(iter.count(), 0);
+    }
+
+    #[test]
+    fn test_contour_many_segments() {
+        let mut contour = Contour::new();
+        contour.add(MapPoint::new(0.0, 0.0));
+        contour.add(MapPoint::new(1.0, 1.0));
+        contour.add(MapPoint::new(2.0, 2.0));
+
+        for (i, p) in contour.iter_segments().enumerate() {
+            assert_eq!(p, contour.segment(i));
+        }
+    }
 }

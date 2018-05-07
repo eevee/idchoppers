@@ -310,7 +310,7 @@ impl<'n> BareWADDirectoryEntry<'n> {
     }
 }
 
-fn fixed_length_ascii(mut input: &[u8], len: usize) -> IResult<&[u8], &str> {
+fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     if input.len() < len {
         return IResult::Incomplete(Needed::Size(len));
     }
@@ -977,9 +977,9 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
     // TODO this is a horrible fucking mess.  but it's a /contained/ horrible fucking mess, so.
     pub fn sector_to_polygons(&self, s: usize) -> Vec<Vec<&BareVertex>> {
         struct Edge<'a, L: 'a> {
-            line: &'a L,
-            side: &'a BareSide<'a>,
-            facing: Facing,
+            _line: &'a L,
+            _side: &'a BareSide<'a>,
+            _facing: Facing,
             v0: &'a BareVertex,
             v1: &'a BareVertex,
             done: bool,
@@ -1018,9 +1018,9 @@ impl<'a, L: BareBinaryLine, T: BareBinaryThing> BareBinaryMap<'a, L, T> {
                 if side.sector as usize == s {
                     let (v0, v1) = line.vertex_indices();
                     let edge = Edge{
-                        line,
-                        side,
-                        facing,
+                        _line: line,
+                        _side: side,
+                        _facing: facing,
                         // TODO should these be swapped depending on the line facing?
                         v0: &self.vertices[v0 as usize],
                         v1: &self.vertices[v1 as usize],

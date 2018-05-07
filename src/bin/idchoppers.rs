@@ -84,7 +84,8 @@ fn run() -> Result<()> {
     match args.subcommand() {
         ("info", Some(subargs)) /* | (_, None) */ => { do_info(&args, &subargs, &wad)? },
         ("chart", Some(subargs)) => { do_chart(&args, &subargs, &wad)? },
-        ("shapeops", Some(subargs)) => { do_shapeops()? },
+        ("flip", Some(subargs)) => { do_flip(&args, &subargs, &wad)? },
+        ("shapeops", Some(_subargs)) => { do_shapeops()? },
         ("route", Some(subargs)) => { do_route(&args, &subargs, &wad)? },
         _ => { println!("????"); /* TODO bogus */ },
     }
@@ -92,7 +93,7 @@ fn run() -> Result<()> {
     Ok(())
 }
 
-fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+fn do_info(_args: &clap::ArgMatches, _subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     match wad.header.identification {
         idchoppers::WADType::IWAD => {
             println!("IWAD");
@@ -104,13 +105,13 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
 
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
     for map_range in wad.iter_maps() {
-        use std::cmp::Ordering::Equal;
+        // use std::cmp::Ordering::Equal;
         
         let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
         match bare_map {
             // TODO interesting diagnostic: mix of map formats in the same wad
             idchoppers::BareMap::Doom(map) => {
-                let full_map = idchoppers::map::Map::from_bare(&map);
+                let _full_map = idchoppers::map::Map::from_bare(&map);
                 println!("");
                 println!("{} - Doom format map", map_range.name);
                 /*
@@ -121,11 +122,11 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
                     println!("{:8} - {} uses, total area {} ≈ {} tiles", name, count, area, area / (64.0 * 64.0));
                 }
                 */
-                for line in map.lines {
+                for _line in map.lines {
 
                 }
             }
-            idchoppers::BareMap::Hexen(map) => {
+            idchoppers::BareMap::Hexen(_map) => {
                 println!("{} - Hexen format map", map_range.name);
             }
         }
@@ -152,7 +153,7 @@ fn do_info(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers
     Ok(())
 }
 
-fn do_chart(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+fn do_chart(_args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
         match idchoppers::parse_doom_map(&wad, &map_range)? {
             // TODO interesting diagnostic: mix of map formats in the same wad
@@ -442,7 +443,7 @@ fn map_as_svg(map: &Map) -> Document {
         .add(group)
 }
 
-fn do_flip(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+fn do_flip(_args: &clap::ArgMatches, _subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     let mut buffer = Vec::new();
     let mut directory = Vec::new();
     let mut filepos: usize = 0;
@@ -637,7 +638,7 @@ fn do_shapeops() -> Result<()> {
 }
 
 
-fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+fn do_route(_args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
     for map_range in wad.iter_maps() {
         /*
         if let idchoppers::MapName::MAPxx(n) = map_range.name {
@@ -655,7 +656,7 @@ fn do_route(args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchopper
                 svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
                 break;
             }
-            idchoppers::BareMap::Hexen(map) => {
+            idchoppers::BareMap::Hexen(_map) => {
                 //let doc = route_map_as_svg(&map);
                 //svg::save(subargs.value_of("outfile").unwrap(), &doc).unwrap();
                 println!("(sorry, can't do hexen maps atm)");
@@ -688,7 +689,7 @@ fn route_map_as_svg(map: &Map) -> Document {
     let mut polygon_refs = Vec::new();
     //let mut polygons = Vec::with_capacity(map.lines.len() + map.sectors.len());
 
-    for (s, sector) in map.iter_sectors().enumerate() {
+    for (s, _sector) in map.iter_sectors().enumerate() {
         let mut polygon = shapeops::Polygon::new();
         for points in map.sector_to_polygons(s).iter() {
             println!("{} {:?}", s, points);
@@ -706,7 +707,7 @@ fn route_map_as_svg(map: &Map) -> Document {
         let mut contour = shapeops::Contour::new();
         let mut classes = vec!["line"];
 
-        let (frontid, backid) = line.side_indices();
+        let (_frontid, _backid) = line.side_indices();
         void_polygons.push(! line.is_two_sided());
 
         if line.is_one_sided() {

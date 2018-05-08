@@ -1,0 +1,16 @@
+[package]
+name = "idchoppers_programs"
+version = "0.1.0"
+authors = ["Eevee (Lexy Munroe) <eevee.git@veekun.com>"]
+
+[dependencies]
+bit-vec = "^0.4"
+byteorder = "^1.0"
+clap = "2"
+idchoppers = { path = ".." }
+svg = "^0.5"
+termcolor = "^0.3"
+
+[[bin]]
+name = "idchoppers"
+path = "src/idchoppers.rs"

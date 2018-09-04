@@ -329,7 +329,7 @@ impl<'n> BareWADDirectoryEntry<'n> {
 
 fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     if input.len() < len {
-        return IResult::Incomplete(Needed::Size(len));
+        return Err(nom::Err::Incomplete(Needed::Size(len)));
     }
 
     for i in 0..len {
@@ -337,19 +337,19 @@ fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
             0 => {
                 // This is the end
                 let s = unsafe { str::from_utf8_unchecked(&input[..i]) };
-                return IResult::Done(&input[len..], s);
+                return Ok((&input[len..], s));
             }
             32 ... 126 => {
                 // OK
             }
             _ => {
                 // Totally bogus character
-                return IResult::Error(nom::Err::Code(nom::ErrorKind::Custom(0)));
+                return Err(nom::Err::Error(nom::Context::Code(&input[i..], nom::ErrorKind::Custom(0))));
             }
         }
     }
 
-    IResult::Done(&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) })
+    Ok((&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) }))
 }
 
 named!(wad_entry<BareWADDirectoryEntry>, dbg_dmp!(do_parse!(
@@ -365,7 +365,7 @@ fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8],
     // TODO can i unhardcode the size of a wad entry here?
     let tablelen = lumpct * 16;
     if buf.len() < offset + tablelen {
-        return IResult::Incomplete(Needed::Size(tablelen));
+        return Err(nom::Err::Incomplete(Needed::Size(tablelen)));
     }
 
     let mut ret = Vec::with_capacity(lumpct);
@@ -375,7 +375,7 @@ fn wad_directory<'a>(buf: &'a [u8], header: &BareWADHeader) -> IResult<&'a [u8],
         ret.push(entry);
         parse_from = leftovers;
     }
-    IResult::Done(parse_from, ret)
+    Ok((parse_from, ret))
 }
 
 
@@ -427,7 +427,7 @@ impl<'a> Iterator for WADMapIterator<'a> {
     fn next(&mut self) -> Option<WADMapEntryBlock> {
         let (marker_index, map_name) = loop {
             if let Some((i, entry)) = self.entry_iter.next() {
-                if let IResult::Done(_, found_map_name) = vanilla_map_name(entry.name.as_bytes()) {
+                if let Ok((_, found_map_name)) = vanilla_map_name(entry.name.as_bytes()) {
                     break (i, found_map_name);
                 }
             }

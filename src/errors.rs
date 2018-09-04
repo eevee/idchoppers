@@ -45,24 +45,28 @@ pub(crate) fn nom_to_result<O>(whence: &'static str, input: &[u8], result: IResu
     }
     */
     match result {
-        IResult::Done(_, value) => {
+        Ok((_, value)) => {
             Ok(value)
         }
-        IResult::Incomplete(_) => {
-            bail!(ErrorKind::TruncatedData(whence));
-        }
-        IResult::Error(err) => {
+        Err(err) => {
             println!("(error: {:?})", err);
-            let error_kind = match err {
-                nom::Err::Code(ref k) | nom::Err::Node(ref k, _) | nom::Err::Position(ref k, _) | nom::Err::NodePosition(ref k, _, _) => k
-            };
-            println!("(error code: {:?})", error_kind);
-            if let nom::Err::Position(_, pos) = err {
-                println!("input size is {}, error happened at {}", input.len(), (&pos[0] as *const u8 as usize) - (&input[0] as *const u8 as usize));
-            }
-            match *error_kind {
-                nom::ErrorKind::Custom(1) => bail!(ErrorKind::InvalidMagic),
-                _ => bail!(ErrorKind::ParseError),
+            match err {
+                nom::Err::Incomplete(_) => {
+                    bail!(ErrorKind::TruncatedData(whence));
+                }
+                nom::Err::Error(ctx) | nom::Err::Failure(ctx) => {
+                    let (pos, error_kind) = match ctx {
+                        nom::Context::Code(input, err) => (input, err),
+                        // TODO there is no nice way to handle both cases at once.
+                        nom::Context::List(inputs) => bail!(ErrorKind::ParseError),
+                    };
+                    println!("(error code: {:?})", error_kind);
+                    println!("input size is {}, error happened at {}", input.len(), (&pos[0] as *const u8 as usize) - (&input[0] as *const u8 as usize));
+                    match error_kind {
+                        nom::ErrorKind::Custom(1) => bail!(ErrorKind::InvalidMagic),
+                        _ => bail!(ErrorKind::ParseError),
+                    }
+                }
             }
         }
     }
@@ -76,7 +80,7 @@ pub fn display_error<O>(input: &[u8], res: IResult<&[u8], O>) {
 
     if let Some(v) = prepare_errors(input, res) {
         let colors = generate_colors(&v);
-        println!("parsers: {}", print_codes(colors, h));
+        println!("parsers: {}", print_codes(&colors, &h));
         println!("{}", print_offsets(input, 0, &v));
     }
 }

@@ -543,17 +543,11 @@ impl Contour {
         self.points.clear();
         self.holes.clear();
     }
-    fn _clear_holes(&mut self) {
-        self.holes.clear();
-    }
     fn _last(&self) -> MapPoint {
         *self.points.last().unwrap()
     }
     fn add_hole(&mut self, ind: usize) {
         self.holes.push(ind);
-    }
-    fn _hole(&self, p: usize) -> usize {
-        self.holes[p]
     }
     pub fn external(&self) -> bool {
         self._external

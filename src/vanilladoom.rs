@@ -1,5 +1,6 @@
 // Extracted from info.c in Doom 1.10:
 // https://github.com/id-Software/DOOM/blob/master/linuxdoom-1.10/info.c
+#![allow(dead_code)]
 
 use super::universe::{ActorType, ThingCategory};
 

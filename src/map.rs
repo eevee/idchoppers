@@ -1,10 +1,33 @@
-use super::BareDoomMap;
+use super::parse::map::BareDoomMap;
 use super::geom::{Coord, Point, Rect};
 
 use std::collections::HashMap;
 use std::marker::PhantomData;
 
 use std;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum MapFormat {
+    Doom,
+    Hexen,
+    UDMF,
+}
+
+// FIXME zdoom allows arbitrary map names, i think?  how does that even work
+#[derive(Debug)]
+pub enum MapName {
+    ExMy(u8, u8),
+    MAPxx(u8),
+}
+
+impl std::fmt::Display for MapName {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match *self {
+            MapName::ExMy(x, y) => write!(f, "E{}M{}", x, y),
+            MapName::MAPxx(x) => write!(f, "MAP{:02}", x),
+        }
+    }
+}
 
 // TODO
 // map diagnostics

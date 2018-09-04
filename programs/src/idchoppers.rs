@@ -685,6 +685,7 @@ use std::collections::HashSet;
 
 const PLAYER_STEP_HEIGHT: i32 = 24;
 const PLAYER_HEIGHT: i32 = 56;
+const PLAYER_USE_RANGE: i32 = 64;
 
 fn route_map_as_svg(map: &Map) -> Document {
     enum PolygonRef<'a> {
@@ -792,6 +793,44 @@ fn route_map_as_svg(map: &Map) -> Document {
     }
 
     // Floodfill to determine visitability and distance
+    // FIXME: clean this up, clean up map interface, this was really hard for me to reread.  change
+    // how data gets out of shapeops if necessary, i don't think i'll need it for much else?
+    // TODO: the next bit is to examine what switches we can hit, but that's slightly tricky since
+    // we're no longer dealing with sectors and lines, but instead these little slices of
+    // accessibility that don't directly touch any walls.  i need to know when a chunk can reach a
+    // line?  which i think is...  whenever it's adjacent to a chunk that contains a line?
+    // TODO making this actually work:
+    // - need to figure out where switches are hittable from; not 100% sure how to do that, since a
+    // switch's reachability is a hemicapsule shape (circles augh!), AND several things can get in the
+    // way (solid walls, closed doors, other switches).  this requires some drawing.  on the other
+    // hand, i don't actually care about the exact point from which you can hit a switch, only
+    // which contours.  (point might matter for timing analysis but that seems like a fool's errand
+    // anyway tbh)
+    // TODO interesting experiments:
+    // - collect reachable places into a traversable "chunk" (tricky bit: a special might alter it
+    // later?  do i need to scan for all possible states of all sectors?)
+    // - in a chunk, keep track of what sectors (or lines) are preventing us from reaching other
+    // chunks
+    // - i think the idea is to break the map into a simplified graph of adjacent spaces.  each
+    // edge has some set of conditions attached to it (may be whether the target can be moved into
+    // /at all/, or may be whether a lift is lowered etc), and each node has some set of switches
+    // that can be pressed
+    // - so how do we combine contours into nodes?  i have two approaches in mind here:
+    // (1) floodfill, as i do below.  check what's reachable, check for switches, try flipping
+    // them, repeat until we find the exit.
+    // pros: relatively simple
+    // cons: not as much information.  requires me to get switches figured out right now, ahem.
+    // doesn't work in cases where a switch or line or whatever causes a formerly passable area to
+    // become impassable again.
+    // (2) "analyze", i.e. split into chunks ahead of time.  i'm not quite sure what this means
+    // yet.  consider the lowering walls in map02; how do i decide that those are a single node?
+    // or what about the sewer area; that's surely its own node, since it has special ways in and
+    // out?  but the starting area isn't.
+    // so then is anything with stairs considered all one node?  like some of the buildings in
+    // industrial zone?  that's a weird case since it's such a huge area and clearly a separate
+    // thing...
+    // - speaking of, we need to handle jumping!  i am still genuinely not sure how this could
+    // work speedily.
     let mut contour_distance: Vec<_> = repeat(0usize).take(result.contours.len()).collect();
     let mut d: usize = 1;
     while ! next_contours.is_empty() {

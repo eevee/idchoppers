@@ -1,9 +1,7 @@
 use std::fs::File;
-use std::io::{self, Read, Write};
+use std::io::Write;
 use std::iter::repeat;
 
-extern crate bit_vec;
-use bit_vec::BitVec;
 extern crate byteorder;
 use byteorder::{LittleEndian, WriteBytesExt};
 extern crate svg;
@@ -18,6 +16,7 @@ extern crate clap;
 
 extern crate idchoppers;
 use idchoppers::errors::{Error, Result};
+use idchoppers::input_buffer::InputBuffer;
 use idchoppers::map::Map;
 
 fn main() {
@@ -66,19 +65,14 @@ fn run() -> Result<()> {
 
     // Read input file
     // TODO this won't make sense for creating a new one from scratch...
-    // TODO for files that aren't stdin, it would be nice to avoid slurping them all in if not
-    // necessary
-    let mut buf = Vec::new();
     let filename = args.value_of("file").unwrap();
-    if filename == "-" {
-        io::stdin().read_to_end(&mut buf)?;
-    }
-    else {
-        let mut file = File::open(filename)?;
-        file.read_to_end(&mut buf)?;
-    }
 
-    let wad = idchoppers::parse_wad(buf.as_slice())?;
+    let input = match filename {
+        "-" => InputBuffer::new_from_stdin()?,
+        f => InputBuffer::new_from_file(f)?,
+    };
+
+    let wad = idchoppers::parse_wad(input.bytes())?;
 
     // Dispatch!
     match args.subcommand() {

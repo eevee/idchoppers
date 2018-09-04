@@ -2,6 +2,7 @@ extern crate byteorder;
 extern crate euclid;
 extern crate typed_arena;
 extern crate bit_vec;
+extern crate memmap;
 #[macro_use]
 extern crate nom;
 #[macro_use]
@@ -20,6 +21,7 @@ use nom::{IResult, Needed, digit, le_i16, le_i32, le_u16, le_u32, le_u8};
 pub mod errors;
 use errors::{ErrorKind, Result, nom_to_result};
 pub mod geom;
+pub mod input_buffer;
 pub mod map;
 pub mod universe;
 pub mod shapeops;

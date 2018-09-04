@@ -728,7 +728,9 @@ impl Polygon {
             nprocessed += 1;
 
             // Find the previous active segment, which should be the nearest one below us
-            let prev_segment = match active_segments.range::<&SweepSegment<_>, _>(..segment).last() {
+            // NOTE: The turbofish fixes an ambiguity in type inference introduced in 1.28, which
+            // added a RangeBounds impl for RangeTo<&T> as well as RangeTo<T>
+            let prev_segment = match active_segments.range::<&_, _>(..segment).last() {
                 Some(segment) => { segment }
                 None => {
                     // We're on the outside, so set us ccw and continue
@@ -1450,8 +1452,8 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
             if active_segments.remove(&segment) {
                 swept_segments.push(segment);
 
-                let maybe_below = active_segments.range::<&SweepSegment<_>, _>(..segment).last().map(|v| *v);
-                let maybe_above = active_segments.range::<&SweepSegment<_>, _>(segment..).next().map(|v| *v);
+                let maybe_below = active_segments.range::<&_, _>(..segment).last().map(|v| *v);
+                let maybe_above = active_segments.range::<&_, _>(segment..).next().map(|v| *v);
                 let cross = handle_intersections(maybe_below, maybe_above);
 
                 if let Some(pt) = cross.1 {
@@ -1466,8 +1468,8 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         }
 
         // the line segment must be inserted into sweep_line
-        let mut maybe_below = active_segments.range::<&SweepSegment<_>, _>(..segment).last().map(|v| *v);
-        let mut maybe_above = active_segments.range::<&SweepSegment<_>, _>(segment..).next().map(|v| *v);
+        let mut maybe_below = active_segments.range::<&_, _>(..segment).last().map(|v| *v);
+        let mut maybe_above = active_segments.range::<&_, _>(segment..).next().map(|v| *v);
         active_segments.insert(segment);
         compute_fields(segment, maybe_below);
         // Check for intersections with the segment above
@@ -1497,7 +1499,7 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         if cross.0 == 2 {
             // XXX might want to enforce that these aren't the same pair twice, since that makes
             // things...  confusing.  artifact of how we sort and split; see comment in PartialOrd
-            compute_fields(maybe_below.unwrap(), active_segments.range::<&SweepSegment<_>, _>(..maybe_below.unwrap()).last().map(|v| *v));
+            compute_fields(maybe_below.unwrap(), active_segments.range::<&_, _>(..maybe_below.unwrap()).last().map(|v| *v));
             compute_fields(segment, maybe_below);
         }
     }

@@ -1774,6 +1774,10 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
 mod tests {
     use super::*;
 
+    fn make_points(points: &[(f64, f64)]) -> Vec<MapPoint> {
+        points.iter().map(|&(x, y)| MapPoint::new(x, y)).collect()
+    }
+
     fn make_rect(x: f64, y: f64, width: f64, height: f64) -> Contour {
         let mut contour = Contour::new();
         contour.add(MapPoint::new(x, y));
@@ -1809,9 +1813,34 @@ mod tests {
         poly1.contours.push(make_rect(0., 0., 10., 10.));
         let mut poly2 = Polygon::new();
         poly2.contours.push(make_rect(20., 20., 10., 10.));
-        let result = compute(&[(poly1, PolygonMode::Normal), (poly2, PolygonMode::Normal)], BooleanOpType::Intersection);
+        let result = compute(&[(poly1.clone(), PolygonMode::Normal), (poly2.clone(), PolygonMode::Normal)], BooleanOpType::Intersection);
         assert_eq!(result.contours.len(), 2);
-        assert_eq!(result.contours[0], poly1.contours[0]);
-        assert_eq!(result.contours[1], poly1.contours[1]);
+        assert_eq!(result.contours[0].points, poly1.contours[0].points);
+        assert_eq!(result.contours[1].points, poly2.contours[0].points);
+    }
+
+    #[test]
+    fn test_corner_overlap() {
+        let mut poly1 = Polygon::new();
+        poly1.contours.push(make_rect(0., 0., 10., 10.));
+        let mut poly2 = Polygon::new();
+        poly2.contours.push(make_rect(5., 5., 10., 10.));
+        let result = compute(&[(poly1.clone(), PolygonMode::Normal), (poly2.clone(), PolygonMode::Normal)], BooleanOpType::Intersection);
+        assert_eq!(result.contours.len(), 3);
+        assert_eq!(result.contours[0].points, make_points(&[(0., 0.), (10., 0.), (10., 5.), (5., 5.), (5., 10.), (0., 10.)]));
+        assert_eq!(result.contours[1].points, make_points(&[(5., 5.), (10., 5.), (10., 10.), (5., 10.)]));
+        assert_eq!(result.contours[2].points, make_points(&[(5., 10.), (10., 10.), (10., 5.), (15., 5.), (15., 15.), (5., 15.)]));
+    }
+
+    #[test]
+    fn test_shared_edge() {
+        let mut poly1 = Polygon::new();
+        poly1.contours.push(make_rect(0., 0., 10., 10.));
+        let mut poly2 = Polygon::new();
+        poly2.contours.push(make_rect(10., 10., 10., 10.));
+        let result = compute(&[(poly1.clone(), PolygonMode::Normal), (poly2.clone(), PolygonMode::Normal)], BooleanOpType::Intersection);
+        assert_eq!(result.contours.len(), 2);
+        assert_eq!(result.contours[0].points, poly1.contours[0].points);
+        assert_eq!(result.contours[1].points, poly2.contours[0].points);
     }
 }

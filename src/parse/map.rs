@@ -3,7 +3,7 @@ use std::str;
 use std::u8;
 
 use byteorder::{LittleEndian, WriteBytesExt};
-use nom::{IResult, le_i16, le_u16, le_u8};
+use nom::{le_i16, le_u16, le_u8};
 
 use super::util::fixed_length_ascii;
 use ::errors::{ErrorKind, Result, nom_to_result};
@@ -49,15 +49,14 @@ impl BareDoomThing {
     }
 }
 
-// TODO totally different in hexen
-named!(doom_things_lump<Vec<BareDoomThing>>, terminated!(many0!(do_parse!(
+named!(doom_things_lump<Vec<BareDoomThing>>, many0!(complete!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
     angle: le_i16 >>
     doomednum: le_i16 >>
     flags: le_u16 >>
     (BareDoomThing{ x, y, angle, doomednum, flags })
-)), eof!()));
+))));
 
 #[derive(Debug)]
 pub struct BareHexenThing {
@@ -74,8 +73,7 @@ pub struct BareHexenThing {
     pub args: [u8; 5],
 }
 
-// TODO totally different in hexen
-named!(hexen_things_lump<Vec<BareHexenThing>>, terminated!(many0!(do_parse!(
+named!(hexen_things_lump<Vec<BareHexenThing>>, many0!(complete!(do_parse!(
     tid: le_i16 >>
     x: le_i16 >>
     y: le_i16 >>
@@ -96,7 +94,7 @@ named!(hexen_things_lump<Vec<BareHexenThing>>, terminated!(many0!(do_parse!(
         special,
         args,
     })
-)), eof!()));
+))));
 
 pub trait BareBinaryThing {
     fn coords(&self) -> (i16, i16);
@@ -148,7 +146,7 @@ impl BareDoomLine {
     }
 }
 
-named!(doom_linedefs_lump<Vec<BareDoomLine>>, terminated!(many0!(do_parse!(
+named!(doom_linedefs_lump<Vec<BareDoomLine>>, many0!(complete!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -157,7 +155,7 @@ named!(doom_linedefs_lump<Vec<BareDoomLine>>, terminated!(many0!(do_parse!(
     front_sidedef: le_i16 >>
     back_sidedef: le_i16 >>
     (BareDoomLine{ v0, v1, flags, special, sector_tag, front_sidedef, back_sidedef })
-)), eof!()));
+))));
 
 // TODO source ports extended ids to unsigned here too
 #[derive(Debug)]
@@ -172,7 +170,7 @@ pub struct BareHexenLine {
     pub back_sidedef: i16,
 }
 
-named!(hexen_linedefs_lump<Vec<BareHexenLine>>, terminated!(many0!(do_parse!(
+named!(hexen_linedefs_lump<Vec<BareHexenLine>>, many0!(complete!(do_parse!(
     v0: le_i16 >>
     v1: le_i16 >>
     flags: le_i16 >>
@@ -189,7 +187,7 @@ named!(hexen_linedefs_lump<Vec<BareHexenLine>>, terminated!(many0!(do_parse!(
         front_sidedef,
         back_sidedef,
     })
-)), eof!()));
+))));
 
 pub trait BareBinaryLine {
     fn vertex_indices(&self) -> (i16, i16);
@@ -257,29 +255,7 @@ impl<'t> BareSide<'t> {
     }
 }
 
-// FIXME using many0! followed by eof! means that if the parse fails, many0! thinks that's a
-// success, stops, and then hits the eof! and fails, which loses the original error and is really
-// confusing
-// TODO file some tickets on nom:
-// - docs for call! are actually for apply!
-// - many_till! with eof! gives a bizarre error about being unable to infer a type for E
-// - error management guide seems to be pre-2.0; mentions importing from nom::util, which is
-//   private, and makes no mention of verbose vs simple errors at all
-//   - also, even with verbose errors, error handling kinda sucks?  i'm not even sure why this is
-//     an enum when it gives me completely useless alternations, some of which (ManyTill) are
-//     thrown in multiple places
-//   - seems impossible to use a different error type due to rust's not very good inference rules
-//   - many_till throws away the underlying error.
-macro_rules! typed_eof (
-    ($i:expr,) => (
-        {
-            let res: IResult<_, _> = eof!($i,);
-            res
-        }
-    );
-);
-
-named!(sidedefs_lump<Vec<BareSide>>, map!(many_till!(do_parse!(
+named!(sidedefs_lump<Vec<BareSide>>, many0!(complete!(do_parse!(
     x_offset: le_i16 >>
     y_offset: le_i16 >>
     upper_texture: apply!(fixed_length_ascii, 8) >>
@@ -294,7 +270,7 @@ named!(sidedefs_lump<Vec<BareSide>>, map!(many_till!(do_parse!(
         middle_texture,
         sector
     })
-), typed_eof!()), |(r, _)| r));
+))));
 
 // FIXME: vertices are i16 for vanilla, 15/16 fixed for ps/n64, effectively infinite but really f32 for udmf
 #[derive(Debug)]
@@ -311,11 +287,11 @@ impl BareVertex {
     }
 }
 
-named!(vertexes_lump<Vec<BareVertex>>, terminated!(many0!(do_parse!(
+named!(vertexes_lump<Vec<BareVertex>>, many0!(complete!(do_parse!(
     x: le_i16 >>
     y: le_i16 >>
     (BareVertex{ x, y })
-)), eof!()));
+))));
 
 
 
@@ -349,7 +325,7 @@ impl<'t> BareSector<'t> {
     }
 }
 
-named!(sectors_lump<Vec<BareSector>>, terminated!(many0!(do_parse!(
+named!(sectors_lump<Vec<BareSector>>, many0!(complete!(do_parse!(
     floor_height: le_i16 >>
     ceiling_height: le_i16 >>
     floor_texture: apply!(fixed_length_ascii, 8) >>
@@ -366,7 +342,7 @@ named!(sectors_lump<Vec<BareSector>>, terminated!(many0!(do_parse!(
         sector_type,
         sector_tag,
     })
-)), eof!()));
+))));
 
 
 #[derive(Debug)]

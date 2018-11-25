@@ -9,6 +9,7 @@ use std::u8;
 
 use nom::{is_digit, le_u8};
 
+use self::util::naive_eof;
 use ::map::MapName;
 
 
@@ -19,7 +20,7 @@ named!(exmy_map_name<MapName>, do_parse!(
     e: verify!(le_u8, is_digit) >>
     tag!(b"M") >>
     m: verify!(le_u8, is_digit) >>
-    eof!() >>
+    naive_eof >>
     (MapName::ExMy(e - b'0', m - b'0'))
 ));
 
@@ -35,7 +36,7 @@ named!(mapxx_map_name<MapName>, do_parse!(
         ),
         |v| v >= 1 && v <= 32
     ) >>
-    eof!() >>
+    naive_eof >>
     (MapName::MAPxx(xx))
 ));
 

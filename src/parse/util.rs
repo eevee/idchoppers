@@ -1,6 +1,6 @@
 use std::str;
 
-use nom::{self, IResult, Needed};
+use nom::{self, InputLength, IResult, Needed};
 
 
 pub fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
@@ -26,4 +26,14 @@ pub fn fixed_length_ascii(input: &[u8], len: usize) -> IResult<&[u8], &str> {
     }
 
     Ok((&input[len..], unsafe { str::from_utf8_unchecked(&input[..len]) }))
+}
+
+
+/// Like nom's eof!(), except it actually works on buffers -- which means it won't work on streams
+pub fn naive_eof(input: &[u8]) -> IResult<&[u8], ()> {
+    if input.input_len() == 0 {
+        Ok((input, ()))
+    } else {
+        Err(nom::Err::Error(error_position!(input, nom::ErrorKind::Eof::<u32>)))
+    }
 }

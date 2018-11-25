@@ -1074,7 +1074,9 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 else { EdgeType::DifferentTransition };
 
                 {
-                    println!("due to split, setting #{} to {:?} and #{} to {:?}", seg1.index, edge_type1, seg2.index, edge_type2);
+                    if SPEW {
+                        println!("due to split, setting #{} to {:?} and #{} to {:?}", seg1.index, edge_type1, seg2.index, edge_type2);
+                    }
                     seg1.data.borrow_mut().edge_type = edge_type1;
                     if seg2.data.borrow().edge_type != EdgeType::NonContributing {
                         seg2.data.borrow_mut().edge_type = edge_type2;
@@ -1504,9 +1506,11 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         }
     }
 
-    println!("");
-    println!("---MAIN LOOP DONE ---");
-    println!("");
+    if SPEW {
+        println!("");
+        println!("---MAIN LOOP DONE ---");
+        println!("");
+    }
 
     {
     let mut svg_swept_group = Group::new();
@@ -1687,7 +1691,9 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         };
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
-        println!("building contour {} from #{} {:?} {:?}", contour_id, segment.index, end, starting_point);
+        if SPEW {
+            println!("building contour {} from #{} {:?} {:?}", contour_id, segment.index, end, starting_point);
+        }
         loop {
             current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
@@ -1695,9 +1701,11 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
                 let mut packet = current_segment.data.borrow_mut();
                 if current_endpoint.1 == SegmentEnd::Left {
                     packet.left_contour_id = Some(contour_id);
+                    contour.from_polygons.union(&packet.left_faces_polygons);
                 }
                 else {
                     packet.right_contour_id = Some(contour_id);
+                    contour.from_polygons.union(&packet.right_faces_polygons);
                 }
                 packet.result_in_out = current_endpoint.1 == SegmentEnd::Right;
             }
@@ -1709,7 +1717,9 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
             contour.add(point);
 
             current_endpoint = find_next_segment(current_endpoint, &included_endpoints);
-            println!("... #{} {:?}", current_endpoint.0.index, current_endpoint.point());
+            if SPEW {
+                println!("... #{} {:?}", current_endpoint.0.index, current_endpoint.point());
+            }
         }
 
         final_polygon.contours.push(contour);
@@ -1729,7 +1739,9 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
                 // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
                 let below_segment = &segment_order[below_segment_id];
                 let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
-                println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
+                if SPEW {
+                    println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
+                }
                 final_polygon[parent_contour_id].add_hole(contour_id);
                 final_polygon[contour_id].set_external(false);
             }
@@ -1762,6 +1774,15 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
 mod tests {
     use super::*;
 
+    fn make_rect(x: f64, y: f64, width: f64, height: f64) -> Contour {
+        let mut contour = Contour::new();
+        contour.add(MapPoint::new(x, y));
+        contour.add(MapPoint::new(x + width, y));
+        contour.add(MapPoint::new(x + width, y + height));
+        contour.add(MapPoint::new(x, y + height));
+        return contour;
+    }
+
     #[test]
     fn test_contour_empty_segments() {
         let contour = Contour::new();
@@ -1780,5 +1801,17 @@ mod tests {
         for (i, p) in contour.iter_segments().enumerate() {
             assert_eq!(p, contour.segment(i));
         }
+    }
+
+    #[test]
+    fn test_no_overlap() {
+        let mut poly1 = Polygon::new();
+        poly1.contours.push(make_rect(0., 0., 10., 10.));
+        let mut poly2 = Polygon::new();
+        poly2.contours.push(make_rect(20., 20., 10., 10.));
+        let result = compute(&[(poly1, PolygonMode::Normal), (poly2, PolygonMode::Normal)], BooleanOpType::Intersection);
+        assert_eq!(result.contours.len(), 2);
+        assert_eq!(result.contours[0], poly1.contours[0]);
+        assert_eq!(result.contours[1], poly1.contours[1]);
     }
 }

@@ -624,7 +624,7 @@ fn do_shapeops() -> Result<()> {
     ;
     //let mut data = Data::new();
     for (i, contour) in result.contours.iter().enumerate() {
-        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
+        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}, neighbors {:?}", i, contour.external(), contour.counterclockwise(), contour.holes, contour.neighbors);
     let mut data = Data::new();
         let point = contour.points.last().unwrap();
         data = data.move_to((point.x, -point.y));
@@ -653,9 +653,11 @@ fn do_shapeops() -> Result<()> {
 
 
 fn do_route(_args: &clap::ArgMatches, subargs: &clap::ArgMatches, wad: &idchoppers::BareWAD) -> Result<()> {
+    println!("routing 1");
     for map_range in wad.iter_maps() {
+        println!("map: {:?}", map_range.name);
         if let idchoppers::MapName::MAPxx(n) = map_range.name {
-            if n < 2 {
+            if n < 15 {
                 continue;
             }
         }
@@ -688,6 +690,7 @@ const PLAYER_HEIGHT: i32 = 56;
 const PLAYER_USE_RANGE: i32 = 64;
 
 fn route_map_as_svg(map: &Map) -> Document {
+    #[derive(Clone)]
     enum PolygonRef<'a> {
         Sector(idchoppers::map::Handle<idchoppers::map::Sector>),
         Line(idchoppers::map::BoundLine<'a>),
@@ -785,20 +788,26 @@ fn route_map_as_svg(map: &Map) -> Document {
     let result = shapeops::compute(&polygons, shapeops::BooleanOpType::Union);
     let mut seen_contours = BTreeSet::new();
     let mut next_contours = Vec::new();
+    let mut contour_origins = Vec::new();
     for (i, contour) in result.contours.iter().enumerate() {
         if contour.bbox().contains(&start) {
             next_contours.push(i);
-            seen_contours.insert(i);
+            //seen_contours.insert(i);
         }
+
+        let mut origins = Vec::new();
+        for (p, from) in contour.from_polygons.iter().enumerate() {
+            if ! from {
+                continue;
+            }
+            origins.push(polygon_refs[p].clone());
+        }
+        contour_origins.push(origins);
     }
 
     // Floodfill to determine visitability and distance
     // FIXME: clean this up, clean up map interface, this was really hard for me to reread.  change
     // how data gets out of shapeops if necessary, i don't think i'll need it for much else?
-    // TODO: the next bit is to examine what switches we can hit, but that's slightly tricky since
-    // we're no longer dealing with sectors and lines, but instead these little slices of
-    // accessibility that don't directly touch any walls.  i need to know when a chunk can reach a
-    // line?  which i think is...  whenever it's adjacent to a chunk that contains a line?
     // TODO making this actually work:
     // - need to figure out where switches are hittable from; not 100% sure how to do that, since a
     // switch's reachability is a hemicapsule shape (circles augh!), AND several things can get in the
@@ -831,42 +840,74 @@ fn route_map_as_svg(map: &Map) -> Document {
     // thing...
     // - speaking of, we need to handle jumping!  i am still genuinely not sure how this could
     // work speedily.
-    let mut contour_distance: Vec<_> = repeat(0usize).take(result.contours.len()).collect();
-    let mut d: usize = 1;
-    while ! next_contours.is_empty() {
-        let contours: Vec<_> = next_contours.drain(..).collect();
-        for &i in &contours {
-            contour_distance[i] = d;
 
-            let mut in_sectors = HashSet::new();
-            for (p, from) in result[i].from_polygons.iter().enumerate() {
-                if ! from {
-                    continue;
-                }
-                match polygon_refs[p] {
-                    PolygonRef::Sector(sector) => {
-                        in_sectors.insert(sector);
+    let mut contour_distance: Vec<_> = repeat(0isize).take(result.contours.len()).collect();
+    let mut d: isize = 1;
+    let mut chunks = Vec::new();
+    let mut contour_tags = Vec::new();
+    for (i, contour) in result.contours.iter().enumerate() {
+        let mut tags = HashSet::new();
+        for (p, from) in result[i].from_polygons.iter().enumerate() {
+            if ! from {
+                continue;
+            }
+            match polygon_refs[p] {
+                PolygonRef::Sector(sectorh) => {
+                    let sector = map.sector(sectorh);
+                    let tag = sector.tag();
+                    if tag != 0 {
+                        tags.insert(tag);
                     }
-                    PolygonRef::Line(line) => {
-                        if let Some(front) = line.front() {
-                            in_sectors.insert(front.sector);
+                }
+                PolygonRef::Line(line) => {
+                    if let Some(front) = line.front() {
+                        let sector = map.sector(front.sector);
+                        let tag = sector.tag();
+                        if tag != 0 {
+                            tags.insert(tag);
                         }
-                        if let Some(back) = line.back() {
-                            in_sectors.insert(back.sector);
+                    }
+                    if let Some(back) = line.back() {
+                        let sector = map.sector(back.sector);
+                        let tag = sector.tag();
+                        if tag != 0 {
+                            tags.insert(tag);
                         }
                     }
                 }
             }
-            let floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).max().unwrap_or(0);
-            
-            for (n, touches) in result[i].neighbors.iter().enumerate() {
-                if ! touches || seen_contours.contains(&n) {
-                    continue;
-                }
+        }
+        // FIXME dumb hack for map02, this is a teleport-only tag; really need to do this correctly
+        tags.remove(&13);
+        contour_tags.push(tags);
+    }
+    let mut seed_ixs = BTreeSet::new();
+    seed_ixs.extend(next_contours.drain(..));
+    println!("seeds: {:?}", seed_ixs);
+    while ! seed_ixs.is_empty() {
+        let &seed = seed_ixs.iter().next().unwrap();
+        seed_ixs.remove(&seed);
+        if seen_contours.contains(&seed) {
+            continue;
+        }
+        seen_contours.insert(seed);
 
+        let mut chunk = BTreeSet::new();
+
+        next_contours.clear();
+        next_contours.push(seed);
+        println!("--- beginning chunk {} ---", d);
+        while ! next_contours.is_empty() {
+            let contours: Vec<_> = next_contours.drain(..).collect();
+            for &contour_ix in &contours {
+                println!("contour {}, tags {:?}", contour_ix, contour_tags[contour_ix]);
+                chunk.insert(contour_ix);
+                contour_distance[contour_ix] = d;
+
+                // Figure out which sectors this countour represents (to stand here, the player
+                // must be able to fit in ALL these sectors)
                 let mut in_sectors = HashSet::new();
-                let mut ok = true;
-                for (p, from) in result[n].from_polygons.iter().enumerate() {
+                for (p, from) in result[contour_ix].from_polygons.iter().enumerate() {
                     if ! from {
                         continue;
                     }
@@ -875,10 +916,6 @@ fn route_map_as_svg(map: &Map) -> Document {
                             in_sectors.insert(sector);
                         }
                         PolygonRef::Line(line) => {
-                            if line.blocks_player() {
-                                ok = false;
-                                break;
-                            }
                             if let Some(front) = line.front() {
                                 in_sectors.insert(front.sector);
                             }
@@ -888,29 +925,103 @@ fn route_map_as_svg(map: &Map) -> Document {
                         }
                     }
                 }
-                if ! ok {
-                    continue;
+                // Figure out the floor height
+                // TODO it's possible for the unwraps to panic here if we have an orphan line with no sides
+                let highest_floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).max().unwrap();
+                let lowest_floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).min().unwrap();
+                println!("  floor height {}", highest_floor);
+                // TODO ceiling, too; requires player height.  currently i check if the target
+                // sector is too short, but i don't even check the current sector?
+
+                // Check neighbors
+                let mut neighbors = result[contour_ix].neighbors.clone();
+                for &hole_ix in &result[contour_ix].holes {
+                    neighbors.union(&result[hole_ix].neighbors);
                 }
-                for &sectorh in &in_sectors {
-                    let sector = map.sector(sectorh);
-                    if sector.floor_height() - floor > PLAYER_STEP_HEIGHT || sector.ceiling_height() - sector.floor_height() < PLAYER_HEIGHT {
+                for (neighbor_ix, touches) in neighbors.iter().enumerate() {
+                    if ! touches || seen_contours.contains(&neighbor_ix) {
+                        continue;
+                    }
+                    print!("  neighbor {}, tags {:?} ...", neighbor_ix, contour_tags[neighbor_ix]);
+
+                    let mut ok = true;
+
+                    // If the tags are different, this can't be in the same chunk
+                    if contour_tags[contour_ix] != contour_tags[neighbor_ix] {
                         ok = false;
-                        break;
+                        println!("NOT OK because sector tags don't match");
+                    }
+
+                    // Compute which sectors this neighbor is in
+                    let mut in_sectors = HashSet::new();
+                    for (p, from) in result[neighbor_ix].from_polygons.iter().enumerate() {
+                        if ! from {
+                            continue;
+                        }
+                        match polygon_refs[p] {
+                            PolygonRef::Sector(sector) => {
+                                in_sectors.insert(sector);
+                            }
+                            PolygonRef::Line(line) => {
+                                if line.blocks_player() {
+                                    ok = false;
+                                    println!("NOT OK because line blocks player");
+                                    break;
+                                }
+                                if let Some(front) = line.front() {
+                                    in_sectors.insert(front.sector);
+                                }
+                                if let Some(back) = line.back() {
+                                    in_sectors.insert(back.sector);
+                                }
+                            }
+                        }
+                    }
+                    // Check if they can be stepped into
+                    // TODO i fear this is too naïve.  what if several contiguous sectors all have
+                    // a tag, and a switch can de-chunk them because they have some weird behavior
+                    // like "raise to nearest neighbor" that moves them to different heights?
+                    // (incidentally, how does that even work if they're also neighbors?)
+                    // TODO unwrap could fail
+                    let neighbor_highest_floor = in_sectors.iter().map(|&sectorh| map.sector(sectorh).floor_height()).max().unwrap();
+                    if neighbor_highest_floor - highest_floor > PLAYER_STEP_HEIGHT
+                        || highest_floor - neighbor_highest_floor > PLAYER_STEP_HEIGHT
+                        // TODO i don't think this is right; it would unnecessarily split up
+                        // multi-sector doors, bars, etc., because AT MAP START none of them
+                        // are traversible.  but for static geometry it's clearly correct, and
+                        // necessary even, for stuff like sound tunnels.  so what's the right
+                        // thing here?
+                        // || sector.ceiling_height() - sector.floor_height() < PLAYER_HEIGHT
+                    {
+                        ok = false;
+                        println!("NOT OK because neighbor's floor {} is too far away", neighbor_highest_floor);
+                    }
+
+                    if ok {
+                        // OK, they're traversible, so same chunk
+                        // TODO this doesn't correctly account for one-way drop-offs if we happen
+                        // to start from the higher side; should probably ok = false if EITHER
+                        // direction doesn't work, so we're forced to find another route
+                        // TODO should i track a game-logic view of individual contour neighbors
+                        // within a chunk?  i guess i'm gonna need that anyway since teleporters
+                        seen_contours.insert(neighbor_ix);
+                        next_contours.push(neighbor_ix);
+                        println!("OK");
+                    }
+                    else {
+                        seed_ixs.insert(neighbor_ix);
                     }
                 }
-                if ! ok {
-                    continue;
-                }
-                
-                seen_contours.insert(n);
-                next_contours.push(n);
             }
         }
+
         d += 1;
+        chunks.push(chunk);
+        println!("seeds: {:?}", seed_ixs);
     }
 
     for (i, contour) in result.contours.iter().enumerate() {
-        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}", i, contour.external(), contour.counterclockwise(), contour.holes);
+        println!("contour #{}: external {:?}, counterclockwise {:?}, holes {:?}, neighbors {:?}", i, contour.external(), contour.counterclockwise(), contour.holes, contour.neighbors.iter().enumerate().filter(|(i, p)| *p).map(|(i, p)| i).collect::<Vec<_>>());
 
         if ! contour.external() {
             continue;
@@ -933,16 +1044,35 @@ fn route_map_as_svg(map: &Map) -> Document {
             }
         }
 
+        let mut origin = String::new();
+        for ref polyref in &contour_origins[i] {
+            origin.push_str(", ");
+            match polyref {
+                PolygonRef::Sector(sectorh) => origin.push_str(&format!("sector {}", sectorh.0)),
+                PolygonRef::Line(line) => origin.push_str(&format!("line {}", line.index())),
+            }
+        }
+
         let color;
         let distance = contour_distance[i];
-        if distance == 0 {
+        if distance == -1 {
             color = String::from("red");
+        }
+        else if distance == 0 {
+            color = String::from("darkred");
         }
         else {
             let frac = distance as f64 / d as f64 * 255.;
-            color = format!("rgb({}, {}, {})", frac, frac, frac);
+            //color = format!("rgb({}, {}, {})", frac, frac, frac);
+            color = format!("hsl({}, 100%, 75%)", frac/255.*330.);
         }
-        group.append(Path::new().set("d", data).set("fill", color));
+        group.append(
+            Path::new()
+            .set("d", data)
+            .set("fill", color)
+            .set("data-origin", origin)
+            .set("data-contour-id", format!("{}", i))
+        );
     }
 
     // Doom's y-axis points up, but SVG's points down.  Rather than mucking with coordinates
@@ -950,8 +1080,9 @@ fn route_map_as_svg(map: &Map) -> Document {
     // the <svg> element, hence the need for this group.)
     map_group.assign("transform", "scale(1 -1)");
     group.assign("transform", "scale(1 -1)");
+    let MARGIN = 32.;
     Document::new()
-        .set("viewBox", (bbox.min_x(), -bbox.max_y(), bbox.size.width, bbox.size.height))
+        .set("viewBox", (bbox.min_x() - MARGIN, -bbox.max_y() - MARGIN, bbox.size.width + MARGIN * 2., bbox.size.height + MARGIN * 2.))
         .add(Style::new(include_str!("map-svg.css")))
         .add(map_group)
         .add(group)

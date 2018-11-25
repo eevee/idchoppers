@@ -337,7 +337,7 @@ pub enum Facing {
     Back,
 }
 
-pub struct Handle<T>(usize, PhantomData<*const T>);
+pub struct Handle<T>(pub usize, PhantomData<*const T>);
 
 // These traits are implemented by hand because #derive'd impls only apply when T implements the
 // same trait, but we don't actually own a T, so that bound is unnecessary.

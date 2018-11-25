@@ -2,6 +2,7 @@ use super::parse::map::BareDoomMap;
 use super::geom::{Coord, Point, Rect};
 
 use std::collections::HashMap;
+use std::f64;
 use std::marker::PhantomData;
 
 use std;
@@ -266,63 +267,110 @@ impl Map {
             }
         }
 
-        // Trace sectors by starting at the first side's first vertex and attempting to walk from
+        fn point_from_vertex(vertex: &Vertex) -> Point {
+            Point::new(vertex.x, vertex.y)
+        }
+
+        // Trace sectors by starting at the first side and attempting to walk from
         // there
         let mut outlines = Vec::new();
-        let mut seen_vertices = HashMap::new();
-        while edges.len() > 0 {
-            let mut next_vertices = Vec::new();
-            for edge in edges.iter() {
-                // TODO having done-ness for both edges and vertices seems weird, idk
-                if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
-                    next_vertices.push(edge.v0);
-                    break;
+        for i in 0..edges.len() {
+            {
+                let starting_edge = &mut edges[i];
+                if starting_edge.done {
+                    continue;
                 }
-                if !seen_vertices.contains_key(&VertexRef(edge.v1)) {
-                    next_vertices.push(edge.v1);
-                    break;
-                }
-            }
-            if next_vertices.is_empty() {
-                break;
+                starting_edge.done = true;
             }
 
-            let mut outline = Vec::new();
-            while next_vertices.len() > 0 {
-                let vertices = next_vertices;
-                next_vertices = Vec::new();
-                for vertex in vertices.iter() {
-                    if seen_vertices.contains_key(&VertexRef(vertex)) {
+            let mut outline = vec![point_from_vertex(edges[i].v0)];
+            let mut prev_vertex = edges[i].v0;
+            let mut next_vertex = edges[i].v1;
+            loop {
+                let next_point = point_from_vertex(next_vertex);
+                if next_point == outline[0] {
+                    // Done!
+                    break;
+                }
+
+                outline.push(next_point);
+
+                // Find the neighboring edge with the closest angle.  That means the biggest dot
+                // product, or the smallest, maybe.
+                // TODO should i just use signed triangle area here?
+                // TODO this is duped from the poly tracing code in shapeops
+                let mut closest_dot = f64::NAN;
+                let mut closest_edge_ix = None;
+                let mut closest_vertex = None;
+                let mut seen_ccw = false;
+                let current_vec = next_point - point_from_vertex(prev_vertex);
+
+                // TODO so, problems occur here if:
+                // - a vertex has more than two edges
+                //   - special case: double-sided edges are OK!  but we have to eliminate
+                //   those, WITHOUT ruining entirely self-referencing sectors
+                // - a vertex has one edge
+                for &e in vertices_to_edges.get(&VertexRef(next_vertex)).unwrap().iter() {
+                    if i == e {
                         continue;
                     }
-                    seen_vertices.insert(VertexRef(vertex), true);
-                    outline.push(Point::new(vertex.x, vertex.y));
+                    let edge = &mut edges[e];
+                    if edge.done {
+                        continue;
+                    }
 
-                    // TODO so, problems occur here if:
-                    // - a vertex has more than two edges
-                    //   - special case: double-sided edges are OK!  but we have to eliminate
-                    //   those, WITHOUT ruining entirely self-referencing sectors
-                    // - a vertex has one edge
-                    for e in vertices_to_edges.get(&VertexRef(vertex)).unwrap().iter() {
-                        let edge = &mut edges[*e];
-                        if edge.done {
-                            // TODO actually this seems weird?  why would this happen.
+                    // TODO check that the edge faces the right way too, especially since v0/v1
+                    // aren't swapped for the "other" side
+                    let other_vertex;
+                    if VertexRef(edge.v0) == VertexRef(next_vertex) {
+                        other_vertex = edge.v1;
+                    }
+                    else {
+                        other_vertex = edge.v0;
+                    }
+
+                    let vec = point_from_vertex(other_vertex) - next_point;
+                    let dot = current_vec.dot(vec) / vec.length();
+
+                    let this_ccw = current_vec.cross(vec) > 0.;
+                    if this_ccw {
+                        // This angle is counterclockwise; if all we've seen so far is clockwise then it
+                        // wins by default
+                        if ! seen_ccw {
+                            seen_ccw = true;
+                            closest_dot = dot;
+                            closest_edge_ix = Some(e);
+                            closest_vertex = Some(other_vertex);
                             continue;
                         }
-                        edge.done = true;
-                        if !seen_vertices.contains_key(&VertexRef(edge.v0)) {
-                            next_vertices.push(edge.v0);
+                    }
+                    else {
+                        // This angle is clockwise; only consider it at all if we haven't seen a ccw angle
+                        if seen_ccw {
+                            continue;
                         }
-                        else if !seen_vertices.contains_key(&VertexRef(edge.v1)) {
-                            next_vertices.push(edge.v1);
-                        }
-                        // Only add EXACTLY ONE vertex at a time for now -- so, assuming simple
-                        // polygons!  Figure out the rest, uh, later.
-                        break;
+                    }
+
+                    if closest_edge_ix.is_none() || (this_ccw && dot < closest_dot) || (!this_ccw && dot > closest_dot) {
+                        closest_dot = dot;
+                        closest_edge_ix = Some(e);
+                        closest_vertex = Some(other_vertex);
                     }
                 }
+
+                if closest_edge_ix.is_none() {
+                    // TODO this does happen in some official maps!  sector 39 in MAP02, the loose
+                    // line in MAP30, E4M8.  fixing is tricky; might have to walk the other way, or
+                    // find an edge connecting our ends, or something
+                    println!("SECTOR {} UNCLOSED? -- points so far {:?}", s, outline);
+                    break;
+                }
+
+                edges[closest_edge_ix.unwrap()].done = true;
+                prev_vertex = next_vertex;
+                next_vertex = closest_vertex.unwrap();
             }
-            if outline.len() > 0 {
+            if outline.len() > 2 {
                 outlines.push(outline);
             }
         }

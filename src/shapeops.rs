@@ -1305,8 +1305,11 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         let mut data = Data::new();
         for contour in &polygon.contours {
             for seg in contour.iter_segments() {
-            /*  if (s.degenerate ()) // if the two edge endpoints are equal the segment is dicarded
-                    return;          // This can be done as preprocessing to avoid "polygons" with less than 3 edges */
+                if seg.source == seg.target {
+                    println!("!!! got a zero-length segment, somehow, at {:?} (polygon #{} {:?})", seg.source, i, mode);
+                    continue;
+                }
+
                 let segment: &_ = arena.alloc(SweepSegment::new(
                     seg.source, seg.target, segment_id, i, RefCell::new(SegmentPacket::new(i, mode, polygons.len()))));
                 segment_id += 1;

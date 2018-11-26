@@ -2,15 +2,15 @@
 // A simple algorithm for Boolean operations on polygons (2013), Martínez et al.
 // TODO clean this up
 // TODO rename it this name is bad
-// TODO finish, it?
-extern crate svg;
-use svg::Document;
-use svg::node::Node;
-use svg::node::element::{Group, Line, Path, Style, Text};
-use svg::node::element::path::Data;
-
-
-
+// TODO get rid of duplicated types; make me work with types used in the rest of this lib
+// TODO tests
+// TODO get rid of panics -- i know one in particular happens with an unclosed polygon since
+// there's nothing left to close it at the end?  occurred when i still had the bug with splitting
+// sectors in MAP15
+// TODO am i parameterizing over SweepSegment or not?  it seems like a nice idea to have this as a
+// general purpose sweep algorithm, but most of this doesn't actually work without the particular
+// packet i already have
+// TODO tracing the final shapes isn't really specific to this code
 use std::cmp;
 use std::cmp::Ordering;
 use std::cmp::Reverse;
@@ -29,9 +29,6 @@ use euclid::TypedPoint2D;
 use euclid::TypedRect;
 use euclid::TypedSize2D;
 use typed_arena::Arena;
-
-
-const SPEW: bool = false;
 
 
 use super::geom::MapSpace;
@@ -60,7 +57,8 @@ fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
 // -----------------------------------------------------------------------------
 // utilities
 
-// NOTE: this, and everything else ported from the paper, assumes the y axis points UP
+// NOTE: the result is positive if the points are ccw and the y-axis points up (as this algorithm
+// assumes), or equivalently, if the points are cw and the y-axis points down (as doom assumes)
 pub fn triangle_signed_area(a: MapPoint, b: MapPoint, c: MapPoint) -> f64 {
     (a.x - c.x) * (b.y - c.y) - (b.x - c.x) * (a.y - c.y)
 }
@@ -924,16 +922,6 @@ fn compute_fields(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegm
         }
     }
 
-    if SPEW {
-        // NOTE: this debug output is hilariously expensive, increases unopt runtime by 50%
-        println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}",
-            segment.index,
-            maybe_below.map(|x| x.index),
-            segment.data.borrow().left_faces_polygons.iter().enumerate().filter(|(i, p)| *p).map(|(i, p)| i).collect::<Vec<_>>(),
-            segment.data.borrow().right_faces_polygons.iter().enumerate().filter(|(i, p)| *p).map(|(i, p)| i).collect::<Vec<_>>(),
-        );
-    }
-
     let is_in_result = is_in_result(segment);
     segment.data.borrow_mut().is_in_result = is_in_result;
 }
@@ -1041,9 +1029,6 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
                 else { EdgeType::DifferentTransition };
 
                 {
-                    if SPEW {
-                        println!("due to split, setting #{} to {:?} and #{} to {:?}", seg1.index, edge_type1, seg2.index, edge_type2);
-                    }
                     seg1.data.borrow_mut().edge_type = edge_type1;
                     if seg2.data.borrow().edge_type != EdgeType::NonContributing {
                         seg2.data.borrow_mut().edge_type = edge_type2;
@@ -1265,11 +1250,9 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     let arena = Arena::new();
     let mut endpoint_queue = BinaryHeap::new();
     let mut segment_id = 0;
-    let mut svg_orig_group = Group::new();
     // TODO could reserve space here and elsewhere
     let mut segment_order = Vec::new();
     for (i, &(ref polygon, mode)) in polygons.iter().enumerate() {
-        let mut data = Data::new();
         for contour in &polygon.contours {
             for (p0, p1) in contour.iter_segments() {
                 if p0 == p1 {
@@ -1284,14 +1267,7 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Right)));
             }
-
-            let point = contour.points.last().unwrap();
-            data = data.move_to((point.x, -point.y));
-            for point in &contour.points {
-                data = data.line_to((point.x, -point.y));
-            }
         }
-        svg_orig_group.append(Path::new().set("d", data).set("fill", "#ffcc44").set("fill-opacity", 0.25).set("data-poly-index", i));
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -1308,9 +1284,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
             {
                 let pt = $pt;
                 let seg = $seg;
-                if SPEW {
-                    println!("ah!  splitting #{} at {:?}, into #{} and #{}", seg.index, pt, segment_id, segment_id + 1);
-                }
                 // It's not obvious at a glance, but in the original algorithm, the left end of a
                 // split inherits the original segment's data, and the right end gets data fresh.
                 // This is important since handle_intersections assigns the whole segment's
@@ -1394,13 +1367,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
 
     // Grab the next endpoint, or bail if we've run out
     while let Some(Reverse(SweepEndpoint(mut segment, end))) = endpoint_queue.pop() {
-        if SPEW {
-            println!("");
-            println!("LOOP ITERATION: {:?} of #{:?}[{}] {:?} -> {:?}", end, segment.index, segment.order, segment.left_point, segment.right_point);
-            for seg in &active_segments {
-                println!("  {} #{}[{}] {:?} -> {:?} | {} {}", if seg < &segment { "<" } else if seg > &segment { ">" } else { "=" }, seg.index, seg.order, seg.left_point, seg.right_point, triangle_signed_area(seg.left_point, seg.right_point, segment.left_point), triangle_signed_area(seg.left_point, seg.right_point, segment.right_point));
-            }
-        }
         // let endpoint = match end {
         //     SegmentEnd::Left => segment.left_point,
         //     SegmentEnd::Right => segment.right_point,
@@ -1476,95 +1442,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         }
     }
 
-    if SPEW {
-        println!("");
-        println!("---MAIN LOOP DONE ---");
-        println!("");
-    }
-
-    {
-    let mut svg_swept_group = Group::new();
-    for segment in &swept_segments {
-        if ! segment.data.borrow().is_in_result {
-            continue;
-        }
-        let mut skip_left = false;
-        for (polygon_index, flag) in segment.data.borrow().left_faces_polygons.iter().enumerate() {
-            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
-                skip_left = true;
-                break;
-            }
-        }
-        if segment.data.borrow().left_faces_polygons.none() {
-            skip_left = true;
-        }
-        let mut skip_right = false;
-        for (polygon_index, flag) in segment.data.borrow().right_faces_polygons.iter().enumerate() {
-            if flag && polygons[polygon_index].1 == PolygonMode::RemoveInterior {
-                skip_right = true;
-                break;
-            }
-        }
-        if segment.data.borrow().right_faces_polygons.none() {
-            skip_right = true;
-        }
-
-        if skip_left && skip_right {
-            continue;
-        }
-        svg_swept_group.append(
-            Line::new()
-            .set("x1", segment.left_point.x)
-            .set("y1", -segment.left_point.y)
-            .set("x2", segment.right_point.x)
-            .set("y2", -segment.right_point.y)
-            .set("stroke", "green")
-            .set("stroke-width", 1)
-        );
-        let mut left_polys = Vec::new();
-        let mut right_polys = Vec::new();
-        for i in 0..polygons.len() {
-            if segment.data.borrow().left_faces_polygons[i] {
-                left_polys.push(i);
-            }
-            if segment.data.borrow().right_faces_polygons[i] {
-                right_polys.push(i);
-            }
-        }
-        svg_swept_group.append(
-            Text::new()
-            .add(svg::node::Text::new(format!("{} {:?}{:?} {} {}", segment.index, left_polys, right_polys, if skip_left { "L" } else { "" }, if skip_right { "R" } else { "" })))
-            .set("x", (segment.left_point.x + segment.right_point.x) / 2.0)
-            .set("y", -(segment.left_point.y + segment.right_point.y) / 2.0)
-            .set("fill", if segment.data.borrow().edge_type == EdgeType::NonContributing { "lightgreen" } else {"darkgreen" })
-            .set("text-anchor", "middle")
-            .set("alignment-baseline", "central")
-            .set("font-size", 4)
-        );
-    }
-    let mut svg_active_group = Group::new();
-    for seg in &active_segments {
-        svg_active_group.append(
-            Line::new()
-            .set("x1", seg.left_point.x)
-            .set("y1", -seg.left_point.y)
-            .set("x2", seg.right_point.x)
-            .set("y2", -seg.right_point.y)
-            .set("stroke", "red")
-            .set("stroke-width", 1)
-        );
-    }
-    let doc = Document::new()
-        .set("viewBox", (-16, -112, 128, 128))
-        .add(Style::new("line:hover { stroke: gold; }"))
-        .add(svg_orig_group)
-        .add(svg_swept_group)
-        .add(svg_active_group)
-    ;
-    svg::save("idchoppers-shapeops-debug.svg", &doc)
-        .expect("could not save idchoppers-shapeops-debug.svg");
-    }
-
     // Finally, trace the output polygons from the final set of segments we got
     let count = swept_segments.len();
     let mut included_segments: Vec<&BoolSweepSegment> = Vec::with_capacity(count);
@@ -1610,19 +1487,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     included_segments.sort();
     included_endpoints.sort();
 
-    if SPEW {
-        println!();
-        println!("-- segments --");
-        for seg in &included_segments {
-            println!("{:?}", seg);
-        }
-        println!();
-        println!("-- endpoints --");
-        for ep in &included_endpoints {
-            println!("{:?} of #{} {:?} -> {:?}", ep.1, ep.0.index, ep.0.left_point, ep.0.right_point);
-        }
-    }
-
     for (i, &SweepEndpoint(segment, end)) in included_endpoints.iter().enumerate() {
         let mut packet = segment.data.borrow_mut();
         match end {
@@ -1661,9 +1525,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         };
         contour.add(starting_point);
         let mut current_endpoint = &included_endpoints[segment.data.borrow().left_index];
-        if SPEW {
-            println!("building contour {} from #{} {:?} {:?}", contour_id, segment.index, end, starting_point);
-        }
         loop {
             current_endpoint.mark_processed();
             let current_segment = current_endpoint.0;
@@ -1687,9 +1548,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
             contour.add(point);
 
             current_endpoint = find_next_segment(current_endpoint, &included_endpoints);
-            if SPEW {
-                println!("... #{} {:?}", current_endpoint.0.index, current_endpoint.point());
-            }
         }
 
         final_polygon.contours.push(contour);
@@ -1709,9 +1567,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
                 // TODO this is the ONLY PLACE that uses segment_order, or segment index at all!
                 let below_segment = &segment_order[below_segment_id];
                 let parent_contour_id = below_segment.data.borrow().left_contour_id.unwrap();
-                if SPEW {
-                    println!("this contour is clockwise, and the segment below is #{}, so i think it's a hole in {}", below_segment_id, parent_contour_id);
-                }
                 final_polygon[parent_contour_id].add_hole(contour_id);
                 final_polygon[contour_id].set_external(false);
             }

@@ -57,23 +57,6 @@ fn compare_points(a: MapPoint, b: MapPoint) -> Ordering {
 }
 
 
-#[derive(Debug, PartialEq)]
-struct Segment2 {
-    source: MapPoint,
-    target: MapPoint,
-}
-
-impl Segment2 {
-    fn new(source: MapPoint, target: MapPoint) -> Self {
-        Self { source, target }
-    }
-
-    fn is_vertical(&self) -> bool {
-        self.source.x == self.target.x
-    }
-}
-
-
 // -----------------------------------------------------------------------------
 // utilities
 
@@ -109,11 +92,11 @@ enum SegmentIntersection {
 
 const SQR_EPSILON: f64 = 0.0000001;
 const EPSILON: f64 = 0.000000000000001;
-fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
-    let p0 = seg0.source;
-    let d0 = seg0.target - p0;
-    let p1 = seg1.source;
-    let d1 = seg1.target - p1;
+fn intersect_segments(seg0: (MapPoint, MapPoint), seg1: (MapPoint, MapPoint)) -> SegmentIntersection {
+    let p0 = seg0.0;
+    let d0 = seg0.1 - p0;
+    let p1 = seg1.0;
+    let d1 = seg1.1 - p1;
     let sep = p1 - p0;
     let kross = d0.cross(d1);
     let d0len2 = d0.square_length();
@@ -132,7 +115,7 @@ fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
         // intersection of lines is a point an each segment
         let mut intersection = p0 + d0 * s;
         // Avoid precision errors by rounding to the nearest segment endpoint
-        for &endpoint in [seg0.source, seg0.target, seg1.source, seg1.target].iter() {
+        for &endpoint in [seg0.0, seg0.1, seg1.0, seg1.1].iter() {
             if (intersection - endpoint).square_length() < EPSILON {
                 intersection = endpoint;
             }
@@ -171,7 +154,7 @@ fn intersect_segments(seg0: &Segment2, seg1: &Segment2) -> SegmentIntersection {
         // XXX shouldn't the intersection point always just be one of the endpoints??
         let mut intersection = p0 + d0 * begin;
         // Avoid precision errors by rounding to the nearest segment endpoint
-        for &endpoint in [seg0.source, seg0.target, seg1.source, seg1.target].iter() {
+        for &endpoint in [seg0.0, seg0.1, seg1.0, seg1.1].iter() {
             if (intersection - endpoint).square_length() < EPSILON {
                 intersection = endpoint;
             }
@@ -264,9 +247,8 @@ impl<T> SweepSegment<T> {
         self.left_point.x == self.right_point.x
     }
 
-    /// Return the line segment
-    fn segment(&self) -> Segment2 {
-        Segment2::new(self.left_point, self.right_point)
+    fn points(&self) -> (MapPoint, MapPoint) {
+        (self.left_point, self.right_point)
     }
 }
 
@@ -499,16 +481,6 @@ impl Contour {
     /// Get the p-th vertex of the external contour
     fn _vertex(&self, p: usize) -> MapPoint { self.points[p] }
 
-    #[cfg(test)]
-    fn segment(&self, p: usize) -> Segment2 {
-        if p == self.points.len() - 1 {
-            Segment2::new(*self.points.last().unwrap(), self.points[0])
-        }
-        else {
-            Segment2::new(self.points[p], self.points[p + 1])
-        }
-    }
-
     fn iter_segments(&self) -> ContourSegments {
         ContourSegments {
             contour: self,
@@ -563,7 +535,7 @@ struct ContourSegments<'a> {
 }
 
 impl<'a> Iterator for ContourSegments<'a> {
-    type Item = Segment2;
+    type Item = (MapPoint, MapPoint);
 
     fn next(&mut self) -> Option<Self::Item> {
         let len = self.contour.points.len();
@@ -577,9 +549,9 @@ impl<'a> Iterator for ContourSegments<'a> {
         self.index += 1;
 
         if i < len - 1 {
-            Some(Segment2::new(self.contour.points[i], self.contour.points[i + 1]))
+            Some((self.contour.points[i], self.contour.points[i + 1]))
         } else if i == len - 1 {
-            Some(Segment2::new(self.contour.points[i], self.contour.points[0]))
+            Some((self.contour.points[i], self.contour.points[0]))
         } else {
             None
         }
@@ -665,15 +637,14 @@ impl Polygon {
             // Initialize every contour to ccw; we'll fix them all in a moment
             contour.set_counterclockwise();
 
-            for (point_id, segment) in contour.iter_segments().enumerate() {
+            for (point_id, (p0, p1)) in contour.iter_segments().enumerate() {
                 // vertical segments are not processed
-                if segment.is_vertical() {
+                if p0.x == p1.x {
                     continue;
                 }
 
                 let index = segments_mut.len();
-                segments_mut.push(SweepSegment::new(
-                    segment.source, segment.target, index, 0, (contour_id, point_id)));
+                segments_mut.push(SweepSegment::new(p0, p1, index, 0, (contour_id, point_id)));
             }
         }
 
@@ -953,18 +924,14 @@ fn compute_fields(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegm
         }
     }
 
-    let mut left_polys = Vec::new();
-    let mut right_polys = Vec::new();
-    for i in 0..segment.data.borrow().left_faces_polygons.len() {
-        if segment.data.borrow().left_faces_polygons[i] {
-            left_polys.push(i);
-        }
-        if segment.data.borrow().right_faces_polygons[i] {
-            right_polys.push(i);
-        }
-    }
     if SPEW {
-        println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}", segment.index, maybe_below.map(|x| x.index), left_polys, right_polys);
+        // NOTE: this debug output is hilariously expensive, increases unopt runtime by 50%
+        println!("@@@ computing fields for #{}, with below {:?} -> {:?} {:?}",
+            segment.index,
+            maybe_below.map(|x| x.index),
+            segment.data.borrow().left_faces_polygons.iter().enumerate().filter(|(i, p)| *p).map(|(i, p)| i).collect::<Vec<_>>(),
+            segment.data.borrow().right_faces_polygons.iter().enumerate().filter(|(i, p)| *p).map(|(i, p)| i).collect::<Vec<_>>(),
+        );
     }
 
     let is_in_result = is_in_result(segment);
@@ -1016,7 +983,7 @@ fn handle_intersections<'a>(maybe_seg1: Option<&'a BoolSweepSegment>, maybe_seg2
 //  if (e1->pol == e2->pol) // you can uncomment these two lines if self-intersecting polygons are not allowed
 //      return 0;
 
-    match intersect_segments(&seg1.segment(), &seg2.segment()) {
+    match intersect_segments(seg1.points(), seg2.points()) {
         SegmentIntersection::None => {
             (0, None, None)
         }
@@ -1304,14 +1271,14 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     for (i, &(ref polygon, mode)) in polygons.iter().enumerate() {
         let mut data = Data::new();
         for contour in &polygon.contours {
-            for seg in contour.iter_segments() {
-                if seg.source == seg.target {
-                    println!("!!! got a zero-length segment, somehow, at {:?} (polygon #{} {:?})", seg.source, i, mode);
+            for (p0, p1) in contour.iter_segments() {
+                if p0 == p1 {
+                    println!("!!! got a zero-length segment, somehow, at {:?} (polygon #{} {:?})", p0, i, mode);
                     continue;
                 }
 
                 let segment: &_ = arena.alloc(SweepSegment::new(
-                    seg.source, seg.target, segment_id, i, RefCell::new(SegmentPacket::new(i, mode, polygons.len()))));
+                    p0, p1, segment_id, i, RefCell::new(SegmentPacket::new(i, mode, polygons.len()))));
                 segment_id += 1;
                 segment_order.push(segment);
                 endpoint_queue.push(Reverse(SweepEndpoint(segment, SegmentEnd::Left)));

@@ -1627,9 +1627,11 @@ mod tests {
         contour.add(MapPoint::new(1.0, 1.0));
         contour.add(MapPoint::new(2.0, 2.0));
 
-        for (i, p) in contour.iter_segments().enumerate() {
-            assert_eq!(p, contour.segment(i));
-        }
+        let mut iter = contour.iter_segments();
+        assert_eq!(iter.next(), Some((contour.points[0], contour.points[1])));
+        assert_eq!(iter.next(), Some((contour.points[1], contour.points[2])));
+        assert_eq!(iter.next(), Some((contour.points[2], contour.points[0])));
+        assert_eq!(iter.next(), None);
     }
 
     #[test]

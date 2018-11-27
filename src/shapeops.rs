@@ -395,7 +395,8 @@ impl<'a, T: 'a> cmp::Ord for SweepEndpoint<'a, T> {
                 // Collinear!  Kind of arbitrary what we do here, but it should be consistent.
                 // NOTE this used to be pol, unsure if this makes any real difference
                 // FIXME currently have the problem where there's a collinear split and one of the
-                // pieces ends up changing order in the list, and then we call compute_fields with
+                // pieces ends up changing order in the list, and then we call
+                // update_polygon_facing with
                 // the same two pieces in both orders, which is nonsense, so...  make sure this
                 // doesn't change the ordering after a split!  that could be really hard since this
                 // algorithm was designed around mutate-splitting the original...
@@ -858,8 +859,143 @@ impl BoolSweepSegment {
     }
 }
 
-/// @brief compute several fields of left event le
-fn compute_fields(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
+
+struct SweepLine<T> {
+    active_segments: BTreeSet<T>,
+}
+
+impl<T: Ord + Copy> SweepLine<T> {
+    pub fn new() -> Self {
+        SweepLine{ active_segments: BTreeSet::new() }
+    }
+
+    pub fn remove(&mut self, item: &T) -> bool {
+        self.active_segments.remove(&item)
+    }
+
+    pub fn insert(&mut self, item: T) {
+        self.active_segments.insert(item);
+    }
+
+    pub fn remove_and_get_neighbors(&mut self, item: &T) -> (bool, Option<T>, Option<T>) {
+        let found = self.active_segments.remove(&item);
+        let maybe_prev = self.active_segments.range(..item).last().map(|v| *v);
+        let maybe_next = self.active_segments.range(item..).next().map(|v| *v);
+        (found, maybe_prev, maybe_next)
+    }
+
+    pub fn insert_and_get_neighbors(&mut self, item: T) -> (Option<T>, Option<T>) {
+        let maybe_prev = self.active_segments.range(..item).last().map(|v| *v);
+        let maybe_next = self.active_segments.range(item..).next().map(|v| *v);
+        self.active_segments.insert(item);
+        (maybe_prev, maybe_next)
+    }
+
+    pub fn get_previous(&self, item: &T) -> Option<T> {
+        self.active_segments.range(..item).last().map(|v| *v)
+    }
+}
+
+impl<'a, T> ::std::iter::IntoIterator for &'a SweepLine<T> {
+    type Item = &'a T;
+    type IntoIter = <&'a BTreeSet<T> as ::std::iter::IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.active_segments.iter()
+    }
+}
+
+
+struct SweepLine2<T> {
+    active_segments: Vec<T>,
+}
+
+impl<T: Ord + Copy> SweepLine2<T> {
+    pub fn new() -> Self {
+        SweepLine2{ active_segments: Vec::new() }
+    }
+
+    pub fn remove(&mut self, item: &T) -> bool {
+        if let Ok(ix) = self.active_segments.binary_search(item) {
+            self.active_segments.remove(ix);
+            return true;
+        }
+        else {
+            return false;
+        }
+    }
+
+    pub fn insert(&mut self, item: T) {
+        if let Err(ix) = self.active_segments.binary_search(&item) {
+            self.active_segments.insert(ix, item);
+        }
+    }
+
+    pub fn remove_and_get_neighbors(&mut self, item: &T) -> (bool, Option<T>, Option<T>) {
+        let res = self.active_segments.binary_search(item);
+        let (found, ix) = match res {
+            Ok(ix) => {
+                self.active_segments.remove(ix);
+                (true, ix)
+            }
+            Err(ix) => (false, ix),
+        };
+        let prev = if ix > 0 {
+            Some(self.active_segments[ix - 1])
+        }
+        else {
+            None
+        };
+        let next = self.active_segments.get(ix);
+        (found, prev, next.map(|v| *v))
+    }
+
+    pub fn insert_and_get_neighbors(&mut self, item: T) -> (Option<T>, Option<T>) {
+        let res = self.active_segments.binary_search(&item);
+        let (found, ix) = match res {
+            Ok(ix) => (true, ix),
+            Err(ix) => (false, ix),
+        };
+        if ! found {
+            self.active_segments.insert(ix, item);
+        }
+        let prev = if ix > 0 {
+            Some(self.active_segments[ix - 1])
+        }
+        else {
+            None
+        };
+        let next = self.active_segments.get(ix + 1);
+        (prev, next.map(|v| *v))
+    }
+
+    pub fn get_previous(&self, item: &T) -> Option<T> {
+        if let Ok(ix) = self.active_segments.binary_search(item) {
+            if ix > 0 {
+                Some(self.active_segments[ix - 1])
+            }
+            else {
+                None
+            }
+        }
+        else {
+            None
+        }
+    }
+}
+
+impl<'a, T> ::std::iter::IntoIterator for &'a SweepLine2<T> {
+    type Item = &'a T;
+    type IntoIter = <&'a Vec<T> as ::std::iter::IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.active_segments.iter()
+    }
+}
+
+
+/// Update what we know about a given segment, based on the one immediately below it
+fn update_polygon_facing(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegment>) {
     // anon scope so the packet goes away at the end and we can reborrow to call is_in_result
     {
         let mut packet = segment.data.borrow_mut();
@@ -903,6 +1039,7 @@ fn compute_fields(segment: &BoolSweepSegment, maybe_below: Option<&BoolSweepSegm
             packet.left_faces_polygons.set(polygon_index, ! up_faces_outwards);
 
             // compute below_in_result field
+            // FIXME why did i comment out this middle bit?  is it necessary??
             if below.vertical() /* || ! is_in_result(operation, below) */ || below_packet.edge_type == EdgeType::NonContributing {
                 packet.below_in_result = below_packet.below_in_result;
             }
@@ -1276,7 +1413,8 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     // segments intersecting the sweep line
     // XXX need to wrap these in Reverse anyway
     // XXX why do i need the explicit type anno here
-    let mut active_segments: BTreeSet<&BoolSweepSegment> = BTreeSet::new();
+    //let mut active_segments: BTreeSet<&BoolSweepSegment> = BTreeSet::new();
+    let mut active_segments: SweepLine2<&BoolSweepSegment> = SweepLine2::new();
     let mut swept_segments = Vec::new();
 
     macro_rules! _split_segment (
@@ -1381,64 +1519,71 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
         }
         */
 
+        // If we hit the right end of a segment, that segment disappears from the sweep line.
+        // That means its neighbors (immediately above and below) become adjacent and need to be
+        // checked for intersections.
         if end == SegmentEnd::Right {
-            // delete line segment associated to "event" from sl and check for intersection between the neighbors of "event" in sl
-            // NOTE the original code stored an iterator ref in posSL; not clear if there's an
-            // equivalent here, though obviously i /can/ get a two-way iterator
-            // FIXME this is especially inefficient since i'm looking up the same value /three/
-            // times
-            if active_segments.remove(&segment) {
+            // FIXME the original code stored an iterator ref in posSL; not clear if there's an
+            // equivalent here, though obviously i /can/ get a two-way iterator.  this is
+            // especially inefficient though since i'm looking up the same value THREE times, and
+            // with an expensive comparator no less
+            let (found, maybe_below, maybe_above) = active_segments.remove_and_get_neighbors(&segment);
+            if found {
                 swept_segments.push(segment);
 
-                let maybe_below = active_segments.range::<&_, _>(..segment).last().map(|v| *v);
-                let maybe_above = active_segments.range::<&_, _>(segment..).next().map(|v| *v);
-                let cross = handle_intersections(maybe_below, maybe_above);
+                if let Some(above) = maybe_above {
+                    if let Some(below) = maybe_below {
+                        let cross = handle_intersections(Some(below), Some(above));
 
-                if let Some(pt) = cross.1 {
-                    _split_segment!(maybe_below.unwrap(), pt);
-                }
-                if let Some(pt) = cross.2 {
-                    _split_segment!(maybe_above.unwrap(), pt);
+                        if let Some(pt) = cross.1 {
+                            _split_segment!(below, pt);
+                        }
+                        if let Some(pt) = cross.2 {
+                            _split_segment!(above, pt);
+                        }
+                    }
                 }
             }
 
             continue;
         }
 
-        // the line segment must be inserted into sweep_line
-        let mut maybe_below = active_segments.range::<&_, _>(..segment).last().map(|v| *v);
-        let mut maybe_above = active_segments.range::<&_, _>(segment..).next().map(|v| *v);
-        active_segments.insert(segment);
-        compute_fields(segment, maybe_below);
+        // Otherwise, this is a left endpoint, so the segment newly crosses the sweep line.
+        // That means it may be adjacent to another segment above or below, and both of those need
+        // to be checked for intersections.
+        let (mut maybe_below, mut maybe_above) = active_segments.insert_and_get_neighbors(segment);
+        update_polygon_facing(segment, maybe_below);
+
         // Check for intersections with the segment above
-        let cross = handle_intersections(Some(segment), maybe_above);
-        if let Some(pt) = cross.1 {
+        let (mode, split_segment, split_above) = handle_intersections(Some(segment), maybe_above);
+        if let Some(pt) = split_segment {
             segment = _split_segment!(segment, pt);
         }
-        if let Some(pt) = cross.2 {
+        if let Some(pt) = split_above {
             maybe_above = Some(_split_segment!(maybe_above.unwrap(), pt));
         }
-        if cross.0 == 2 {
-            // NOTE: this seems super duper goofy to me; why call compute_fields a second time
+        if mode == 2 {
+            // NOTE: this seems super duper goofy to me; why call update_polygon_facing a second time
             // with the same args in particular?
             // NOTE: answer is: because returning 2 means we changed the segments' edge types, so
             // is_in_result might change!
-            compute_fields(segment, maybe_below);
-            compute_fields(maybe_above.unwrap(), Some(segment));
+            update_polygon_facing(segment, maybe_below);
+            update_polygon_facing(maybe_above.unwrap(), Some(segment));
         }
+
         // Check for intersections with the segment below
-        let cross = handle_intersections(maybe_below, Some(segment));
-        if let Some(pt) = cross.1 {
+        let (mode, split_below, split_segment) = handle_intersections(maybe_below, Some(segment));
+        if let Some(pt) = split_below {
             maybe_below = Some(_split_segment!(maybe_below.unwrap(), pt));
         }
-        if let Some(pt) = cross.2 {
+        if let Some(pt) = split_segment {
             segment = _split_segment!(segment, pt);
         }
-        if cross.0 == 2 {
+        if mode == 2 {
             // XXX might want to enforce that these aren't the same pair twice, since that makes
             // things...  confusing.  artifact of how we sort and split; see comment in PartialOrd
-            compute_fields(maybe_below.unwrap(), active_segments.range::<&_, _>(..maybe_below.unwrap()).last().map(|v| *v));
-            compute_fields(segment, maybe_below);
+            update_polygon_facing(maybe_below.unwrap(), active_segments.get_previous(&maybe_below.unwrap()));
+            update_polygon_facing(segment, maybe_below);
         }
     }
 
@@ -1502,16 +1647,6 @@ pub fn compute(polygons: &[(Polygon, PolygonMode)], operation: BooleanOpType) ->
     for endpoint in included_endpoints.iter() {
         let &SweepEndpoint(segment, end) = endpoint;
         if endpoint.is_processed() {
-            continue;
-        }
-
-        // FIXME maybe do this in previous loop
-        if end == SegmentEnd::Left && segment.data.borrow().left_faces_polygons.none() {
-            segment.data.borrow_mut().left_processed = true;
-            continue;
-        }
-        else if end == SegmentEnd::Right && segment.data.borrow().right_faces_polygons.none() {
-            segment.data.borrow_mut().right_processed = true;
             continue;
         }
 

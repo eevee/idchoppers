@@ -1,7 +1,7 @@
 use std;
 use std::borrow::Cow;
 
-use super::Archive;
+use super::{Archive, Namespace};
 use ::map::{MapFormat, MapName};
 use ::parse::vanilla_map_name;
 
@@ -23,48 +23,143 @@ pub struct WADEntry<'a> {
     pub data: Cow<'a, [u8]>,
 }
 
+pub struct MapBlock {
+    pub format: MapFormat,
+    pub name: MapName,  // TODO what are the rules in zdoom?  can you really use any map name?
+    pub marker: Entry,
+
+    pub things: Option<Entry>,
+    pub linedefs: Option<Entry>,
+    pub sidedefs: Option<Entry>,
+    pub vertexes: Option<Entry>,
+    pub segs: Option<Entry>,
+    pub ssectors: Option<Entry>,
+    pub nodes: Option<Entry>,
+    pub sectors: Option<Entry>,
+    pub reject: Option<Entry>,
+    pub blockmap: Option<Entry>,
+    pub behavior: Option<Entry>,
+    pub textmap: Option<Entry>,
+    // TODO unknown lumps (udmf only)
+    // TODO endmap
+}
+pub struct Entry {
+    pub name: String,
+    pub data: Vec<u8>,
+    pub namespace: Namespace,
+}
+pub enum Item {
+    Map(MapBlock),
+    Entry(Entry),
+}
+
 /// High-level interface to a WAD archive.  Does its best to prevent you from producing an invalid
 /// WAD.  This is probably what you want.
 #[allow(dead_code)]
-pub struct WADArchive<'a> {
-    // TODO it would be nice if we could take ownership of the slice somehow, but i don't know how
-    // to do that really.  i also don't know how to tell rust that the entry slices are owned by
-    // this buffer?
-    buffer: &'a [u8],
-
+pub struct WADArchive {
     /// WAD type for this archive
     pub wadtype: WADType,
 
-    // Pairs of (name, data)
-    entries: Vec<WADEntry<'a>>,
+    contents: Vec<Item>,
 }
-impl<'a> Archive for WADArchive<'a> {
+impl Archive for WADArchive {
 }
 
-impl<'a> WADArchive<'a> {
-    pub fn first_entry(&self, name: &str) -> Option<&WADEntry> {
-        self.entries.iter()
-        .find(|entry| entry.name == name)
+impl WADArchive {
+    pub fn from_bare(wad: &BareWAD) -> Self {
+        let make_entry = |i: usize| {
+            let wad_entry = &wad.directory[i];
+            Entry {
+                name: wad_entry.name.to_owned(),
+                data: wad_entry.extract_slice(wad.buffer).to_owned(),
+                namespace: Namespace::Map,
+            }
+        };
+
+        let mut namespace = Namespace::Unknown;
+        let mut contents = Vec::new();
+        for item in wad.iter() {
+            match item {
+                WADItem::Map(map_range) => {
+                    contents.push(Item::Map(MapBlock {
+                        format: map_range.format,
+                        name: map_range.name,
+                        marker: make_entry(map_range.marker_index),
+
+                        // TODO better handling for these unwraps
+                        things: map_range.things_index.map(make_entry),
+                        linedefs: map_range.linedefs_index.map(make_entry),
+                        sidedefs: map_range.sidedefs_index.map(make_entry),
+                        vertexes: map_range.vertexes_index.map(make_entry),
+                        segs: map_range.segs_index.map(make_entry),
+                        ssectors: map_range.ssectors_index.map(make_entry),
+                        nodes: map_range.nodes_index.map(make_entry),
+                        sectors: map_range.sectors_index.map(make_entry),
+                        reject: map_range.reject_index.map(make_entry),
+                        blockmap: map_range.blockmap_index.map(make_entry),
+                        behavior: map_range.behavior_index.map(make_entry),
+                        textmap: map_range.textmap_index.map(make_entry),
+                    }));
+                }
+                WADItem::StartMarker(entry) => {
+                }
+                WADItem::EndMarker(entry) => {
+                }
+                WADItem::Entry(entry) => {
+                    contents.push(Item::Entry(Entry {
+                        name: entry.name.to_owned(),
+                        data: entry.extract_slice(wad.buffer).to_owned(),
+                        namespace: Namespace::Unknown,
+                    }));
+                }
+            }
+        }
+
+        WADArchive {
+            wadtype: wad.header.identification,
+            contents: contents,
+        }
     }
-    
+
+    pub fn first_entry(&self, name: &str) -> Option<&Entry> {
+        for item in &self.contents {
+            if let &Item::Entry(ref entry) = item {
+                if entry.name == name {
+                    return Some(entry);
+                }
+            }
+        }
+        None
+    }
+
     // TODO:
     pub fn iter_entry(&self, name: &str) {
         unimplemented!()
     }
-    
+
     pub fn iter_between(&self, _start: &str, _end: &str) {
         unimplemented!()
     }
-    
+
     pub fn iter_maps(&self) {
         unimplemented!()
     }
-    
+
     pub fn iter_flats(&self) {
         unimplemented!()
     }
     // TODO interesting things:
     // - find suspected markers that contain data
+
+}
+
+impl<'a> ::std::iter::IntoIterator for &'a WADArchive {
+    type Item = &'a Item;
+    type IntoIter = <&'a Vec<Item> as ::std::iter::IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.contents.iter()
+    }
 }
 
 // TODO:
@@ -102,16 +197,7 @@ impl<'n> BareWAD<'n> {
     }
 
     pub fn to_archive(&self) -> WADArchive {
-        WADArchive{
-            buffer: self.buffer,
-            wadtype: self.header.identification,
-            entries: self.directory.iter()
-                .map(|bare_entry| WADEntry{
-                    name: Cow::from(bare_entry.name),
-                    data: Cow::from(bare_entry.extract_slice(self.buffer))
-                })
-                .collect(),
-        }
+        WADArchive::from_bare(self)
     }
 
     pub fn entry_slice(&self, index: usize) -> &[u8] {
@@ -131,45 +217,67 @@ impl<'n> BareWAD<'n> {
             &self.buffer[start..end]
         })
     }
-    
-    pub fn iter_entries_between(&self, begin_marker: &str, end_marker: &str) -> BareWADBetweenIterator {
-        // TODO: deal with unwraps somehow?
-        let start = self.directory.iter()
-            .position(|entry| entry.name == begin_marker)
-            .unwrap();
-        let end = self.directory.iter()
-            .position(|entry| entry.name == end_marker)
-            .unwrap();
-        
+
+    pub fn iter_entries_between<'a>(&'a self, begin_marker: &'a str, end_marker: &'a str) -> BareWADBetweenIterator<'a> {
         BareWADBetweenIterator {
-            wad_buffer: self.buffer,
-            entries: &self.directory[start + 1..end],
+            archive: self,
+            next_index: 0,
+            begin_marker,
+            end_marker,
+            between_markers: false,
         }
     }
-    
-    pub fn iter_maps(&self) -> WADMapIterator {
-        WADMapIterator{
+
+    pub fn iter_maps(&self) -> impl Iterator<Item=WADMapEntryBlock> + '_ {
+        self.iter().filter_map(|item|
+            if let WADItem::Map(map_block) = item {
+                Some(map_block)
+            }
+            else {
+                None
+            }
+        )
+    }
+
+    pub fn iter(&self) -> WADIterator {
+        WADIterator {
             archive: self,
-            entry_iter: self.directory.iter().enumerate().peekable()
+            entry_iter: self.directory.iter().enumerate().peekable(),
         }
     }
 }
 pub struct BareWADBetweenIterator<'wad> {
-    entries: &'wad [BareWADDirectoryEntry<'wad>],
-    wad_buffer: &'wad [u8],
+    archive: &'wad BareWAD<'wad>,
+    next_index: usize,
+    begin_marker: &'wad str,
+    end_marker: &'wad str,
+    between_markers: bool,
 }
 impl<'w> Iterator for BareWADBetweenIterator<'w> {
     type Item = WADEntry<'w>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        self.entries.split_first()
-        .map(|(entry, entries)| {
-            self.entries = entries;
-            WADEntry {
-                name: Cow::from(entry.name),
-                data: Cow::from(entry.extract_slice(self.wad_buffer)),
+        loop {
+            if self.next_index >= self.archive.directory.len() {
+                return None;
             }
-        })
+
+            let entry = &self.archive.directory[self.next_index];
+            self.next_index += 1;
+
+            if self.between_markers && entry.name == self.end_marker {
+                self.between_markers = false;
+            }
+            else if ! self.between_markers && entry.name == self.begin_marker {
+                self.between_markers = true;
+            }
+            else if self.between_markers {
+                return Some(WADEntry {
+                    name: Cow::from(entry.name),
+                    data: Cow::from(entry.extract_slice(self.archive.buffer)),
+                })
+            }
+        }
     }
 }
 
@@ -213,33 +321,47 @@ const MAP_LUMP_ORDER: [(&str, bool); 11] = [
     ("BEHAVIOR", false),
 ];
 
-#[allow(dead_code)]
-pub struct WADMapIterator<'a> {
+
+//#[derive(Debug)]
+pub enum WADItem<'a> {
+    Map(WADMapEntryBlock),
+    StartMarker(&'a BareWADDirectoryEntry<'a>),
+    EndMarker(&'a BareWADDirectoryEntry<'a>),
+    Entry(&'a BareWADDirectoryEntry<'a>),
+}
+
+pub struct WADIterator<'a> {
     archive: &'a BareWAD<'a>,
     entry_iter: std::iter::Peekable<std::iter::Enumerate<std::slice::Iter<'a, BareWADDirectoryEntry<'a>>>>,
 }
 
-impl<'a> Iterator for WADMapIterator<'a> {
-    type Item = WADMapEntryBlock;
+impl<'a> Iterator for WADIterator<'a> {
+    type Item = WADItem<'a>;
 
-    fn next(&mut self) -> Option<WADMapEntryBlock> {
-        let (marker_index, map_name) = loop {
-            if let Some((i, entry)) = self.entry_iter.next() {
-                if let Ok((_, found_map_name)) = vanilla_map_name(entry.name.as_bytes()) {
-                    break (i, found_map_name);
-                }
-            }
-            else {
-                // Hit the end of the entries
-                return None;
-            }
-        };
+    fn next(&mut self) -> Option<Self::Item> {
+        let (i, entry) = self.entry_iter.next()?;
+        let map_name;
+        if let Ok((_, found_map_name)) = vanilla_map_name(entry.name.as_bytes()) {
+            map_name = found_map_name;
+        }
+        // TODO this seems hokey?  it's tied specifically to doom stuff, so it shouldn't be
+        // generic, so it should also know what these things /mean/
+        else if entry.name.ends_with("_START") {
+            return Some(WADItem::StartMarker(entry));
+        }
+        else if entry.name.ends_with("_END") {
+            return Some(WADItem::EndMarker(entry));
+        }
+        else {
+            return Some(WADItem::Entry(entry));
+        }
 
+        // The rest of this is assembling the map lumps!
         let mut range = WADMapEntryBlock{
             format: MapFormat::Doom,
             name: map_name,
-            marker_index,
-            last_index: marker_index,
+            marker_index: i,
+            last_index: i,
 
             things_index: None,
             linedefs_index: None,
@@ -317,9 +439,10 @@ impl<'a> Iterator for WADMapIterator<'a> {
         }
 
         range.last_index = i;
-        Some(range)
+        Some(WADItem::Map(range))
     }
 }
+
 
 #[derive(Debug)]
 pub struct WADMapEntryBlock {
@@ -340,6 +463,7 @@ pub struct WADMapEntryBlock {
     pub blockmap_index: Option<usize>,
     pub behavior_index: Option<usize>,
     pub textmap_index: Option<usize>,
+    // TODO unknown lumps (udmf only)
     // TODO endmap
 }
 

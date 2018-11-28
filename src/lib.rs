@@ -23,7 +23,7 @@ mod vanilladoom;
 // TODO yeah probably not.  also: consider renaming from BareX to XData, since it's supposed to be
 // just a dumb hunk of data.  also also: cut up sector_to_polygons into a few pieces.  and make a
 // SimplePolygon type, and use it in shapeops instead of Contour hey why not.
-pub use ::parse::map::{BareMap, BareBinaryLine, BareBinaryThing, BareBinaryMap, parse_doom_map};
+pub use ::parse::map::{BareMap, BareBinaryLine, BareBinaryThing, BareBinaryMap, parse_doom_map, parse_doom_map_from_archive};
 pub use ::parse::texturex::parse_texturex_names;
 pub use ::parse::wad::parse_wad;
 pub use ::map::MapName;

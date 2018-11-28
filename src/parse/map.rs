@@ -9,6 +9,7 @@ use super::util::fixed_length_ascii;
 use ::errors::{ErrorKind, Result, nom_to_result};
 use ::map::{MapFormat};
 use ::archive::wad::{BareWAD, WADMapEntryBlock};
+use ::archive::wad::MapBlock;
 use ::util::RefKey;
 
 // TODO map parsing requires:
@@ -413,6 +414,48 @@ pub fn parse_doom_map<'a>(archive: &'a BareWAD, range: &WADMapEntryBlock) -> Res
         let things_index = range.things_index.ok_or(ErrorKind::MissingMapLump("THINGS"))?;
         let buf = archive.entry_slice(things_index);
         let things = nom_to_result("THINGS lump", buf, hexen_things_lump(buf))?;
+
+        Ok(BareMap::Hexen(BareHexenMap{
+            vertices,
+            sectors,
+            sides,
+            lines,
+            things,
+        }))
+    }
+}
+pub fn parse_doom_map_from_archive<'a>(block: &'a MapBlock) -> Result<BareMap<'a>> {
+    // TODO the map being parsed doesn't appear in the returned error...  sigh
+    let entry = block.vertexes.as_ref().ok_or(ErrorKind::MissingMapLump("VERTEXES"))?;
+    let vertices = nom_to_result("VERTEXES lump", &entry.data, vertexes_lump(&entry.data))?;
+
+    let entry = block.sectors.as_ref().ok_or(ErrorKind::MissingMapLump("SECTORS"))?;
+    let sectors = nom_to_result("SECTORS lump", &entry.data, sectors_lump(&entry.data))?;
+
+    let entry = block.sidedefs.as_ref().ok_or(ErrorKind::MissingMapLump("SIDEDEFS"))?;
+    let sides = nom_to_result("SIDEDEFS lump", &entry.data, sidedefs_lump(&entry.data))?;
+
+    if block.format == MapFormat::Doom {
+        let entry = block.linedefs.as_ref().ok_or(ErrorKind::MissingMapLump("LINEDEFS"))?;
+        let lines = nom_to_result("LINEDEFS lump", &entry.data, doom_linedefs_lump(&entry.data))?;
+
+        let entry = block.things.as_ref().ok_or(ErrorKind::MissingMapLump("THINGS"))?;
+        let things = nom_to_result("THINGS lump", &entry.data, doom_things_lump(&entry.data))?;
+
+        Ok(BareMap::Doom(BareDoomMap{
+            vertices,
+            sectors,
+            sides,
+            lines,
+            things,
+        }))
+    }
+    else {
+        let entry = block.linedefs.as_ref().ok_or(ErrorKind::MissingMapLump("LINEDEFS"))?;
+        let lines = nom_to_result("LINEDEFS lump", &entry.data, hexen_linedefs_lump(&entry.data))?;
+
+        let entry = block.things.as_ref().ok_or(ErrorKind::MissingMapLump("THINGS"))?;
+        let things = nom_to_result("THINGS lump", &entry.data, hexen_things_lump(&entry.data))?;
 
         Ok(BareMap::Hexen(BareHexenMap{
             vertices,

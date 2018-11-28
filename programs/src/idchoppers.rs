@@ -91,30 +91,74 @@ fn do_info(_args: &clap::ArgMatches, _subargs: &clap::ArgMatches, wad: &idchoppe
     println!("{:?}", wad.header.identification);
 
     println!("found {:?}, {:?}, {:?}", wad.header.identification, wad.header.numlumps, wad.header.infotableofs);
-    for map_range in wad.iter_maps() {
-        // use std::cmp::Ordering::Equal;
-        
-        let bare_map = idchoppers::parse_doom_map(&wad, &map_range)?;
-        match bare_map {
-            // TODO interesting diagnostic: mix of map formats in the same wad
-            idchoppers::BareMap::Doom(map) => {
-                let _full_map = idchoppers::map::Map::from_bare(&map);
-                println!("");
-                println!("{} - Doom format map", map_range.name);
-                /*
-                let texture_counts = map.count_textures();
-                let mut pairs: Vec<_> = texture_counts.iter().collect();
-                pairs.sort_by(|&(_, &(_, area0)), &(_, &(_, area1))| area0.partial_cmp(&area1).unwrap_or(Equal));
-                for &(name, &(count, area)) in pairs.iter().rev() {
-                    println!("{:8} - {} uses, total area {} ≈ {} tiles", name, count, area, area / (64.0 * 64.0));
-                }
-                */
-                for _line in map.lines {
 
+    // TODO low-level wad diagnostics
+
+    // for UNDERSEA, i would want to know:
+    // - this is for 1/ultimate
+    // - it goes in map slot E2M1
+    //   - coop is supported
+    //   - skill levels are supported
+    //   - deathmatch is NOT supported
+    //   - there are no missing textures or unrecognized things
+    //   - summary of ammo, health, armor, critters
+    //   - detail level (texture variety, amount of big solid walls, variety in wall angles, decor...)
+    //   - looks like a kind of simple but decently-made doom 1 era map
+    // - it replaces the E2M1 music
+    // - there are no other lump replacements
+    // - it's vanilla compatible
+    // - oddity: there are numerous empty and nameless extra lumps
+    // for DYSTOPIA, i would want to know:
+    // - this is for 2
+    // - it goes in map slot MAP01
+    //   - missing some textures!
+    //   - ... etc ...
+    // - no other lump replacements
+    // - it's vanilla compatible
+    // for OUTSIDE2:
+    // - this is for 2
+    // - oddity: it uses map slots 1 and 21?
+    // - adds some new stuff, etc...
+
+    let archive = wad.to_archive();
+
+    // so, what does the api look like here?  i feel like i want something that iterates over
+    // either single entries or maps, for starters.  but i want to skip markers, yet know the
+    // namespace something goes in.
+    // (and for "info" purposes, i do also want to know if e.g. the markers are misaligned, AND i
+    // want to try to fix it if possible!  how does this fit into that world?)
+    use idchoppers::archive::wad::Item;
+    for item in &archive {
+        match item {
+            Item::Map(map_block) => {
+                // use std::cmp::Ordering::Equal;
+
+                let bare_map = idchoppers::parse_doom_map_from_archive(&map_block)?;
+                match bare_map {
+                    // TODO interesting diagnostic: mix of map formats in the same wad
+                    idchoppers::BareMap::Doom(map) => {
+                        let _full_map = idchoppers::map::Map::from_bare(&map);
+                        println!("");
+                        println!("{} - Doom format map", map_block.name);
+                        /*
+                        let texture_counts = map.count_textures();
+                        let mut pairs: Vec<_> = texture_counts.iter().collect();
+                        pairs.sort_by(|&(_, &(_, area0)), &(_, &(_, area1))| area0.partial_cmp(&area1).unwrap_or(Equal));
+                        for &(name, &(count, area)) in pairs.iter().rev() {
+                            println!("{:8} - {} uses, total area {} ≈ {} tiles", name, count, area, area / (64.0 * 64.0));
+                        }
+                        */
+                        for _line in map.lines {
+
+                        }
+                    }
+                    idchoppers::BareMap::Hexen(_map) => {
+                        println!("{} - Hexen format map", map_block.name);
+                    }
                 }
             }
-            idchoppers::BareMap::Hexen(_map) => {
-                println!("{} - Hexen format map", map_range.name);
+            Item::Entry(entry) => {
+                println!("{} - lump", entry.name);
             }
         }
     }
@@ -125,6 +169,11 @@ fn do_info(_args: &clap::ArgMatches, _subargs: &clap::ArgMatches, wad: &idchoppe
     }
     println!("---");
 
+    // TODO even if there are new textures, they can't be used in vanilla without a texture lump
+    // TODO also in vanilla, the lumps are /patches/ (P namespace) and are meaningless without
+    // textures, so i should really be consulting this
+    // TODO check against vanilla game's textures, see if any are missing!  but that only applies
+    // to vanilla; i /think/ zdoom (others?) can combine multiple texture lumps
     let texture_entries =
         if let Some(texbuf) = wad.first_entry("TEXTURE1").or(wad.first_entry("TEXTURE2")) {
             idchoppers::parse_texturex_names(texbuf)?
@@ -133,8 +182,15 @@ fn do_info(_args: &clap::ArgMatches, _subargs: &clap::ArgMatches, wad: &idchoppe
             vec![]
         }
     ;
-    for entry in texture_entries.iter() {
-        println!("{}", entry.name);
+    // TODO need to determine the right base game first
+    // TODO note that an IWAD is its own base game, though it might be marked wrong too!  (what
+    // things does an iwad absolutely need?  does it depend on the particular engine?)
+    // TODO maybe check if any vanilla textures were /altered/, though that could be tricky
+    // TODO repeated texture names in the same lump?
+    let texture_names: HashSet<_> = texture_entries.iter().map(|entry| entry.name).collect();
+    let stock_texture_names: HashSet<_> = idchoppers::universe::DOOM2_TEXTURES.iter().map(|v| *v).collect();
+    for name in texture_names.difference(&stock_texture_names) {
+        println!("{}", name);
     }
 
     Ok(())
